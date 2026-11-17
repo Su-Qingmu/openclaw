@@ -45,7 +45,6 @@ import type {
 import { UpdateCommandRecoveryPendingError } from "./update-command-recovery-error.js";
 import { createUpdateCommandFinalizationFence } from "./update-command-recovery.js";
 import { UpdateCommandFailure } from "./update-command-result.js";
-import { releaseLegacySourceLock } from "./update-command-runtime.js";
 import {
   resolveUpdatedInstallCommandEnv,
   stripGatewayServiceMarkerEnv,
@@ -353,7 +352,6 @@ export async function continueMigratedUpdateInFreshProcess(
     const {
       requesterAuthority,
       executorFence,
-      sourceArtifactLock: _sourceArtifactLock,
       deadline: _deadline,
       ...runIdentity
     } = run;
@@ -399,7 +397,6 @@ export async function continueMigratedUpdateInFreshProcess(
           }
         },
       });
-    await releaseLegacySourceLock(root, run.sourceArtifactLock);
     const child = executorFence
       ? await withUpdateCommandExecutorChild(executorFence, root, runChild)
       : await runChild();
