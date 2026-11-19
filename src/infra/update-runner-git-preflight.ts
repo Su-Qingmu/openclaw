@@ -325,7 +325,6 @@ export async function runGitCandidatePreflight(params: {
   frozenLockfile?: boolean;
   /** Build in this release worktree, under `prefix`, instead of a temporary one. */
   release?: { prefix: string; worktreeDir: string };
-  beforeGitStaging?: UpdateRunnerOptions["beforeGitStaging"];
   validateCandidate: UpdateRunnerOptions["validateCandidate"];
   prepareCandidate?: (root: string, cleanupRoot: string) => Promise<void>;
   retainCleanup?: (cleanup: () => Promise<boolean>) => boolean;
@@ -536,13 +535,6 @@ export async function runGitCandidatePreflight(params: {
   const preflightBaseSha = candidates[0]!;
   if (canSkipActivation && preflightBaseSha === params.beforeSha) {
     return { status: "skipped", reason: "already-current" };
-  }
-  if (params.beforeGitStaging) {
-    const admission = await params.beforeGitStaging();
-    params.steps.push(admission.step);
-    if (isFailedUpdateStep(admission.step)) {
-      return { status: "error", reason: admission.failureReason };
-    }
   }
 
   // Worktree checkout can execute filters, and subsequent checks run target code.

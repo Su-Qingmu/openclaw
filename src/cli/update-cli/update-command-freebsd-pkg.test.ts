@@ -48,7 +48,6 @@ function gitUpdateParams(root: string): Parameters<typeof updateGitInstall>[0] {
     inspectGitTarget: refuseMutation,
     validateCandidate: refuseMutation,
     beforeGitMutation: refuseMutation,
-    getSnapshotSource: async () => ({ config: {}, env: process.env }),
   };
 }
 
@@ -169,19 +168,16 @@ describe("FreeBSD pkg update admission", () => {
       const checkout = vi
         .spyOn(shared, "ensureGitCheckout")
         .mockRejectedValue(new Error("unexpected checkout mutation"));
-      const getSnapshotSource = vi.fn(async () => ({ config: {}, env: process.env }));
       mockOwnership(selected);
       await expect(
         updateGitInstall({
           ...gitUpdateParams(requested),
           switchToGit: true,
           installKind: "package",
-          getSnapshotSource,
         }),
       ).rejects.toMatchObject({ reason: "pkg-owned-install" });
       expect(manager).not.toHaveBeenCalled();
       expect(checkout).not.toHaveBeenCalled();
-      expect(getSnapshotSource).not.toHaveBeenCalled();
     });
   });
 

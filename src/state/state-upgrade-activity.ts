@@ -21,9 +21,7 @@ export function readStateUpgradeActivity(
   }
   for (const entry of entries) {
     // Generations can contain dashes; the pid and start time are the last two fields.
-    const pid = entry.startsWith(UPGRADE_WORK_PREFIX)
-      ? /-(\d+)-\d+$/u.exec(entry)?.[1]
-      : undefined;
+    const pid = entry.startsWith(UPGRADE_WORK_PREFIX) ? /-(\d+)-\d+$/u.exec(entry)?.[1] : undefined;
     const stat = pid
       ? fs.statSync(path.join(stateDir, entry), { throwIfNoEntry: false })
       : undefined;

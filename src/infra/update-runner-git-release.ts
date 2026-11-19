@@ -242,7 +242,6 @@ export async function updateGitRelease(params: {
       // A package-to-Git switch always builds its first release, even from a current checkout.
       beforeRuntimeVerified:
         !params.firstRelease && recovery.serviceRestartSafe && beforeSha === runningSha,
-      beforeGitStaging: opts.beforeGitStaging,
       validateCandidate: opts.validateCandidate,
       needsCheckoutMain: channel === "dev" && !opts.devTarget && branch !== DEV_BRANCH,
       beforeCandidate: (revision) =>

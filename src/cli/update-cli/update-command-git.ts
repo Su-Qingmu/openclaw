@@ -2,9 +2,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { sameFileIdentity } from "@openclaw/fs-safe/advanced";
-import { theme } from "../../../packages/terminal-core/src/theme.js";
-import { resolveStateDir } from "../../config/paths.js";
-import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { readRegularFile } from "../../infra/fs-safe.js";
 import {
   gitReleaseSlot,
@@ -13,7 +10,6 @@ import {
 } from "../../infra/git-release-paths.js";
 import { readPackageReleaseSlotSync } from "../../infra/package-release-slot-path.js";
 import { hasNodeErrorCode } from "../../infra/path-guards.js";
-import { assessInitialUpdateSnapshotCapacity } from "../../infra/update-candidate-snapshot.js";
 import { DEV_BRANCH, type UpdateChannel } from "../../infra/update-channels.js";
 import {
   resolveDevUpdateTargetRevision,
@@ -33,10 +29,7 @@ import {
   DEFAULT_UPDATE_STEP_TIMEOUT_MS,
   UPDATE_RUNNER_TIMEOUT_MS,
 } from "../../infra/update-run-timeouts.js";
-import {
-  buildUpdateCommandRunner,
-  reportUpdateStepCompletion,
-} from "../../infra/update-runner-command.js";
+import { buildUpdateCommandRunner } from "../../infra/update-runner-command.js";
 import { updateGitRelease } from "../../infra/update-runner-git-release.js";
 import { readGitTargetSchemaVersions } from "../../infra/update-runner-git-schema.js";
 import { readBranchName, selectChannelTag } from "../../infra/update-runner-git-target.js";
@@ -54,7 +47,6 @@ import { splitShellArgs } from "../../utils/shell-argv.js";
 import { ensureGitCheckout, resolveGitInstallDir, resolveGlobalManager } from "./shared.js";
 import { readPackageUpdateIdentity } from "./update-command-package-identity.js";
 import { readOriginalUpdateRecovery } from "./update-command-recovery.js";
-import { assessSnapshotCapacityOfferingCleanup } from "./update-snapshot-space-cleanup.js";
 
 /**
  * The installer's `openclaw` wrapper for a checkout: retired after a switch to a package,
@@ -391,8 +383,6 @@ export async function updateGitInstall(params: {
   beforeGitMutation: UpdateRunnerOptions["beforeGitMutation"];
   validateCandidate: UpdateRunnerOptions["validateCandidate"];
   assertCurrent?: () => void;
-  getSnapshotSource: () => Promise<{ config: OpenClawConfig; env: NodeJS.ProcessEnv }>;
-  jsonMode?: boolean;
   nodeRunner?: string;
   inspectGitTarget: (
     target: Parameters<UpdateRunnerOptions["inspectGitTarget"]>[0],
@@ -431,47 +421,6 @@ export async function updateGitInstall(params: {
     steps,
     durationMs: Date.now() - params.startedAt,
   });
-
-  const checkSnapshot = async () => {
-    const info = {
-      name: "snapshot-space-preflight",
-      command: "snapshot-space-preflight",
-      index: 0,
-      total: 0,
-    };
-    await params.progress.onStepStart?.(info);
-    assertCurrent?.();
-    const { config, env } = await params.getSnapshotSource();
-    // An interactive update was offered cleanup before it started; here it is only named.
-    const snapshot = await assessSnapshotCapacityOfferingCleanup(
-      () =>
-        assessInitialUpdateSnapshotCapacity({
-          config,
-          stateDir: resolveStateDir(env),
-          env,
-          backupDirectory: resolveGitReleasePrefix(env),
-        }),
-      { prompt: false, env, print: () => {} },
-    );
-    await reportUpdateStepCompletion(params.progress, { ...snapshot, index: 0, total: 0 });
-    assertCurrent?.();
-    if (snapshot.exitCode !== 0) {
-      defaultRuntime.error(snapshot.stderrTail ?? "snapshot-capacity-insufficient");
-    } else {
-      for (const warning of snapshot.warnings ?? []) {
-        if (params.jsonMode) {
-          defaultRuntime.error(`Warning: ${warning}`);
-        } else {
-          defaultRuntime.log(theme.warn(warning));
-        }
-      }
-    }
-    return snapshot;
-  };
-  const snapshotBeforeClone = params.switchToGit ? await checkSnapshot() : undefined;
-  if (snapshotBeforeClone && snapshotBeforeClone.exitCode !== 0) {
-    return failed("snapshot-capacity-insufficient", [snapshotBeforeClone]);
-  }
   const previousPackage = installTarget
     ? await readPackageUpdateIdentity(installTarget.packageRoot ?? params.root)
     : undefined;
@@ -485,10 +434,7 @@ export async function updateGitInstall(params: {
         progress: params.progress,
       })
     : null;
-  const cloneSteps = [
-    ...(snapshotBeforeClone ? [snapshotBeforeClone] : []),
-    ...(checkout?.step ? [checkout.step] : []),
-  ];
+  const cloneSteps = checkout?.step ? [checkout.step] : [];
   if (checkout?.step && checkout.step.exitCode !== 0) {
     return await failed("git-clone-failed", cloneSteps);
   }
@@ -527,12 +473,6 @@ export async function updateGitInstall(params: {
           assertCurrent?.();
         },
         inspectGitTarget: (target) => params.inspectGitTarget(target, installTarget ?? undefined),
-        beforeGitStaging: params.switchToGit
-          ? undefined
-          : async () => ({
-              step: await checkSnapshot(),
-              failureReason: "snapshot-capacity-insufficient",
-            }),
         validateCandidate: params.validateCandidate,
       },
     });

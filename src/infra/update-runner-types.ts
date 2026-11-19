@@ -47,8 +47,6 @@ export type UpdateRunnerOptions = {
   devTarget?: DevUpdateTarget;
   /** Read-only admission before executing a fetched candidate; never stops a service. */
   inspectGitTarget: (target: GitUpdateTarget) => Promise<void>;
-  /** Admit required preparation after no-op detection, before allocating the candidate worktree. */
-  beforeGitStaging?: () => Promise<{ step: UpdateStepResult; failureReason: string }>;
   /** Accepted candidate checks join the update's step results. */
   validateCandidate: (root: string) => Promise<readonly UpdateStepResult[] | void>;
   beforeGitMutation: (target: GitUpdateTarget) => Promise<void>;

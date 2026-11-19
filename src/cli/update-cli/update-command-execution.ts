@@ -613,13 +613,6 @@ export async function executeMutableUpdate(
             await beforeActivate(gitMutationRoots ?? [params.root]);
           }
         },
-        getSnapshotSource: async () => {
-          const env =
-            ownedManagedUpdateContext?.env ?? admission?.managedEnv ?? opts.run?.env ?? process.env;
-          const source = await readUpdateCandidateSource(env, params.legacyConfigPlan);
-          return { config: source.config, env };
-        },
-        jsonMode: Boolean(opts.json),
         validateCandidate: async (candidateRoot) => {
           const steps = await validateCandidate(candidateRoot);
           assertUpdateCandidateSteps(steps);
@@ -674,10 +667,8 @@ export async function executeMutableUpdate(
     mutationStarted,
     // A Git release starts nothing from the candidate before its restart. A package
     // candidate opens state only through its Doctor or the --no-restart boot check.
-    // The in-place Git runner rewrites the serving checkout, so it stays conservative.
     candidateOpenedState:
-      params.gitRelease !== true &&
-      (params.updateInstallKind !== "package" || doctorEntered || !params.shouldRestart),
+      params.updateInstallKind === "package" && (doctorEntered || !params.shouldRestart),
     preManagedServiceStop,
     ownedManagedUpdateContext,
     recoveryEnv,
