@@ -1,21 +1,11 @@
-import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it, vi } from "vitest";
-import { collectNestedErrorCandidates } from "../infra/error-graph-internal.js";
-import { SqliteWorkerError } from "../infra/sqlite-worker-contract.js";
-import * as stepWrites from "../infra/update-run-write.async.js";
-import { hasCommandProcessCleanupError } from "../process/exec-result.js";
-import { createDeferredCore } from "../shared/deferred.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
-import * as stateWorker from "../state/openclaw-state-worker-store.js";
 import { withEnvAsync } from "../test-utils/env.js";
 import { VERSION } from "../version.js";
 import { ExpectedCliError } from "./expected-cli-error.js";
 import {
-  commandCalls,
   expectNoSideEffects,
   freshRestartCalls,
-  gatewayCommandCall,
-  getErrorOutput,
   getLogOutput,
   lastWriteJsonCall,
   packageInstallCommandCall,
@@ -23,7 +13,6 @@ import {
 import { createUpdateCliFixture } from "./update-cli-fixture.test-support.js";
 import * as mocks from "./update-cli-mocks.test-support.js";
 import * as update from "./update-cli-modules.test-support.js";
-import * as progressOwner from "./update-cli/update-command-run.js";
 
 await vi.hoisted(() => import("./update-cli-mocks.test-support.js"));
 
@@ -190,222 +179,6 @@ describe("update-cli", () => {
     expect(migrated.continueMigratedUpdateInFreshProcess).toHaveBeenCalledOnce();
     expect(ledgerReads).toHaveBeenCalledTimes(readsAtHandoff);
   });
-
-  it.each(["confirmed", "unknown"] as const)(
-    "records ordered update phases only after buffered receipt settlement (%s)",
-    async (outcome) => {
-      const json = false;
-      const progressReads = await import("../infra/update-run-reader.js");
-      const readProgress = progressReads.getUpdateRunForProgressAsync;
-      const heldReads: ReturnType<typeof readProgress>[] = [];
-      const readSignals: AbortSignal[] = [];
-      const releaseReads = new Set<() => void>();
-      vi.spyOn(progressReads, "getUpdateRunForProgressAsync").mockImplementation((...args) => {
-        const readSignal = expectDefined(args[2], "owned progress reader signal");
-        readSignals.push(readSignal);
-        const delayed = (async () => {
-          const snapshot = structuredClone(await readProgress(...args));
-          if (!readSignal.aborted) {
-            await new Promise<void>((resolve) => {
-              const release = () => {
-                readSignal.removeEventListener("abort", release);
-                releaseReads.delete(release);
-                resolve();
-              };
-              releaseReads.add(release);
-              readSignal.addEventListener("abort", release, { once: true });
-            });
-          }
-          return snapshot;
-        })();
-        heldReads.push(delayed);
-        return delayed;
-      });
-      const prepareService = vi.spyOn(
-        await import("./update-cli/update-command-post-update-maintenance.js"),
-        "preparePostUpdateService",
-      );
-      const ledgerReads = vi.spyOn(await import("../infra/update-run-ledger.js"), "getUpdateRun");
-      const { updatedEntrypoint } = await f.setupNpmUpdatedRootRefresh({
-        beforeVersion: "0.9.0",
-        targetVersion: VERSION,
-      });
-      const createProgress = progressOwner.createUpdateRunProgress;
-      let observedActivation = false;
-      vi.spyOn(progressOwner, "createUpdateRunProgress").mockImplementation((...args) => {
-        const progress = createProgress(...args);
-        const completeStep = progress.onStepComplete;
-        progress.onStepComplete = async (step) => {
-          const readsBefore = ledgerReads.mock.calls.length;
-          await completeStep?.(step);
-          if (step.name === "openclaw doctor") {
-            // The real package Doctor completes after activation, before schema
-            // inspection authorizes reopening the candidate's ledger.
-            expect(progress.pendingSteps).toContainEqual(
-              expect.objectContaining({ step: "openclaw doctor", status: "completed" }),
-            );
-            expect(ledgerReads).toHaveBeenCalledTimes(readsBefore);
-            observedActivation = true;
-          }
-        };
-        return progress;
-      });
-      const entered = createDeferredCore();
-      const release = createDeferredCore();
-      const unknown = new SqliteWorkerError("buffered receipt reply lost", "outcome-unknown");
-      let armed = false;
-      let intercepted = false;
-      let receiptCalls = 0;
-      let receiptRunId: string | undefined;
-      let receiptError: unknown;
-      let workerReply: unknown;
-      const runWorker = stateWorker.runOpenClawStateWorkerOperation;
-      vi.spyOn(stateWorker, "runOpenClawStateWorkerOperation").mockImplementation(
-        async (...args) => {
-          const target = armed;
-          if (target) {
-            armed = false;
-            intercepted = true;
-          }
-          const reply = await runWorker(...args);
-          if (target) {
-            workerReply = reply;
-            entered.resolve();
-            await release.promise;
-            if (outcome === "unknown") {
-              throw unknown;
-            }
-          }
-          return reply;
-        },
-      );
-      const writeStep = stepWrites.recordUpdateRunStepAsync;
-      vi.spyOn(stepWrites, "recordUpdateRunStepAsync").mockImplementation(async (...args) => {
-        if (args[1].step !== "openclaw doctor" || args[1].status !== "completed") {
-          return writeStep(...args);
-        }
-        receiptCalls++;
-        receiptRunId = args[0];
-        armed = !intercepted;
-        try {
-          // Recovery preparation can yield before dispatch; retain the selected receipt through settlement.
-          return await writeStep(...args).catch((error: unknown) => {
-            receiptError = error;
-            throw error;
-          });
-        } finally {
-          armed = false;
-        }
-      });
-      const pending = update.updateCommand({ yes: true, json });
-      const settled = pending.then(
-        () => ({ ok: true as const }),
-        (error: unknown) => ({ ok: false as const, error }),
-      );
-      try {
-        await Promise.race([
-          entered.promise,
-          settled.then((result) => {
-            throw new Error("Update finished without its buffered worker receipt", {
-              cause: result.ok ? undefined : result.error,
-            });
-          }),
-        ]);
-        expect(observedActivation).toBe(true);
-        expect(receiptCalls).toBe(1);
-        expect(prepareService).not.toHaveBeenCalled();
-        expect(gatewayCommandCall(updatedEntrypoint, "install")).toBeUndefined();
-        expect(freshRestartCalls()).toHaveLength(0);
-        expect(update.runDaemonRestart).not.toHaveBeenCalled();
-        const runId = expectDefined(receiptRunId, "buffered receipt run");
-        expect(workerReply).toMatchObject({ kind: "recorded", record: { runId } });
-        expect(update.getUpdateRun(runId)).toMatchObject({
-          status: "running",
-          steps: expect.arrayContaining([
-            expect.objectContaining({ step: "openclaw doctor", status: "completed" }),
-          ]),
-        });
-        release.resolve();
-        const result = await settled;
-        expect(receiptCalls).toBe(1);
-        if (outcome === "unknown") {
-          expect(result.ok).toBe(false);
-          const cliError = result.ok ? undefined : result.error;
-          expect(hasCommandProcessCleanupError(cliError)).toBe(true);
-          expect(collectNestedErrorCandidates(cliError)).toContain(receiptError);
-          expect(hasCommandProcessCleanupError(receiptError)).toBe(true);
-          expect(collectNestedErrorCandidates(receiptError)).toContain(unknown);
-          expect(prepareService).not.toHaveBeenCalled();
-          expect(gatewayCommandCall(updatedEntrypoint, "install")).toBeUndefined();
-          expect(freshRestartCalls()).toHaveLength(0);
-          expect(update.runDaemonRestart).not.toHaveBeenCalled();
-          expect(mocks.serviceRestart).not.toHaveBeenCalled();
-          expect(mocks.serviceStart).not.toHaveBeenCalled();
-          const failed = expectDefined(update.getUpdateRun(runId), "uncertain receipt history");
-          expect(failed.status).not.toBe("succeeded");
-          expect(failed.steps).toContainEqual(
-            expect.objectContaining({ step: "openclaw doctor", status: "completed" }),
-          );
-          expect(update.defaultRuntime.writeJson).not.toHaveBeenCalledWith(
-            expect.objectContaining({ status: "ok" }),
-          );
-          return;
-        }
-        if (!result.ok) {
-          throw new Error(`${getErrorOutput()}\n${JSON.stringify(lastWriteJsonCall())}`, {
-            cause: result.error,
-          });
-        }
-        expect(observedActivation).toBe(true);
-        expect(prepareService).toHaveBeenCalledOnce();
-        expect(
-          commandCalls().filter(([argv]) => argv[2] === "gateway" && argv[3] === "install"),
-        ).toEqual([
-          expectDefined(
-            gatewayCommandCall(updatedEntrypoint, "install"),
-            "updated Gateway install",
-          ),
-        ]);
-        expect(freshRestartCalls()).toHaveLength(0);
-        expect(update.runDaemonRestart).not.toHaveBeenCalled();
-        const run = expectDefined(update.listUpdateRuns({ limit: 1 })[0], "admitted update run");
-        expect(mocks.serviceStop, getErrorOutput()).toHaveBeenCalledOnce();
-        expect(run, getErrorOutput()).toMatchObject({
-          trigger: "cli",
-          status: "succeeded",
-          phase: "finished",
-          verification: { serviceRunning: true, runningVersion: VERSION },
-        });
-        const phases = [
-          "requested",
-          "staging",
-          "validating",
-          "activating",
-          "restarting",
-          "verifying",
-        ];
-        expect(
-          run.steps.filter((step) => phases.includes(step.step)).map((step) => step.step),
-        ).toEqual(phases);
-        expect(heldReads.length).toBeGreaterThan(0);
-        expect(readSignals.every((signal) => signal.aborted)).toBe(true);
-        const output = getLogOutput();
-        expect(output.split("\n").filter((line) => line.startsWith("Phase:"))).toEqual(
-          [...phases, "finished"].map((phase) => `Phase: ${phase}`),
-        );
-        expect(output.indexOf("OpenClaw updated")).toBeGreaterThan(
-          output.indexOf("Phase: finished"),
-        );
-      } finally {
-        release.resolve();
-        await settled;
-        for (const releaseRead of releaseReads) {
-          releaseRead();
-        }
-        await Promise.allSettled(heldReads);
-      }
-    },
-  );
 
   it.each([
     { name: "update channel", run: () => update.invokeUpdateCli({ channel: "" }) },

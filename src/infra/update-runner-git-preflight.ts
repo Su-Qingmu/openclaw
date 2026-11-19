@@ -4,7 +4,6 @@ import { normalizeStringEntries } from "@openclaw/normalization-core/string-norm
 import { hasCommandProcessCleanupError } from "../process/exec-result.js";
 import { resolveControlUiAssetHealth } from "./control-ui-assets.js";
 import { hasErrnoCode } from "./errno.js";
-import { formatErrorMessage } from "./errors.js";
 import { readPackageManagerSpec } from "./package-json.js";
 import { DEV_BRANCH } from "./update-channels.js";
 import { resolveDevUpdateTargetRevision, type DevUpdateTarget } from "./update-dev-target.js";
@@ -14,7 +13,6 @@ import {
   parsePnpmPackageManagerVersion,
   resolveUpdateBuildManager,
 } from "./update-package-manager.js";
-import { UpdatePreMutationError } from "./update-pre-mutation-error.js";
 import { isFailedUpdateStep } from "./update-run-step.js";
 import { runStep } from "./update-runner-command.js";
 import { cleanupGitPreflight } from "./update-runner-git-cleanup.js";
@@ -56,9 +54,6 @@ type GitCandidatePreflightResult =
   | {
       status: "ok";
       candidateSha: string;
-      selectedDevUpstream: string | null;
-      selectedDevSource: GitFetchTarget | null;
-      localDevBranchExists: boolean | null;
     }
   | { status: "error" | "skipped"; reason: NonNullable<UpdateRunResult["reason"]> };
 
@@ -275,8 +270,7 @@ async function testPreflightCandidate(
     }
     await candidateCommand.restoreWorkspace?.();
     params.steps.push(...((await params.validateCandidate(params.worktreeDir)) ?? []));
-    // Activation checks out candidateSha and promotes only generated runtime paths.
-    // Check after repair so validated source edits cannot disappear at activation.
+    // Verify repairs preserve the selected source before publishing the release.
     const { result: cleanCheck } = await runGitCleanCheckStep(
       params.step(
         "preflight-update-clean-check",
@@ -328,7 +322,6 @@ export async function runGitCandidatePreflight(params: {
   validateCandidate: UpdateRunnerOptions["validateCandidate"];
   prepareCandidate?: (root: string, cleanupRoot: string) => Promise<void>;
   retainCleanup?: (cleanup: () => Promise<boolean>) => boolean;
-  onCleanupReportingError?: (error: unknown) => void;
   needsCheckoutMain: boolean;
   runCommand: CommandRunner;
   timeoutMs: number;
@@ -364,8 +357,6 @@ export async function runGitCandidatePreflight(params: {
     ? normalizeNullableString(resolveDevUpdateTargetRevision(params.devTarget))
     : null;
   let candidates: string[];
-  let selectedDevUpstream: string | null = null;
-  let selectedDevSource: GitFetchTarget | null = null;
   let localDevBranchExists: boolean | null = null;
   let localDevBranchSha: string | undefined;
   if (params.targetRevision) {
@@ -419,7 +410,6 @@ export async function runGitCandidatePreflight(params: {
     if (!source || (source.remote !== "." && !params.refreshedRemotes.includes(source.remote))) {
       return { status: "skipped", reason: "no-upstream" };
     }
-    selectedDevSource = { remote: source.remote, mergeRef: source.mergeRef };
     // Keep the cache ref identity separate from the fetched source revision.
     const upstreamRef = await resolveGitUpdateTrackingRef(readGit, DEV_BRANCH, {
       remote: source.remote,
@@ -433,8 +423,6 @@ export async function runGitCandidatePreflight(params: {
     if (!upstreamSha) {
       return { status: "error", reason: "no-upstream-sha" };
     }
-    // Local branches are operator state, not remote cache refs to publish after admission.
-    selectedDevUpstream = upstreamRef?.startsWith("refs/heads/") ? null : upstreamRef;
     const revListStep = await runStep(
       step("git-rev-list", "rev-list", `--max-count=${PREFLIGHT_MAX_COMMITS}`, upstreamSha),
     );
@@ -629,15 +617,7 @@ export async function runGitCandidatePreflight(params: {
     }
   } catch (error) {
     cleanupUncertain = hasCommandProcessCleanupError(error);
-    const failedStep = params.steps.findLast(isFailedUpdateStep);
-    throw cleanupUncertain ||
-      failedStep?.name !== "preflight-runtime-stage" ||
-      error instanceof UpdatePreMutationError
-      ? error
-      : new UpdatePreMutationError("git-preflight-failed", formatErrorMessage(error), {
-          cause: error,
-          stepResult: { steps: params.steps, failedStep },
-        });
+    throw error;
   } finally {
     if (!cleanupUncertain) {
       const cleanup = () =>
@@ -677,8 +657,5 @@ export async function runGitCandidatePreflight(params: {
   return {
     status: "ok",
     candidateSha: tested.candidateSha,
-    selectedDevUpstream,
-    selectedDevSource,
-    localDevBranchExists,
   };
 }

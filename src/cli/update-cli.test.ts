@@ -48,7 +48,6 @@ describe("update-cli", () => {
     mockFileBackedPathExists,
     mockNpmGlobalCommands,
     mockPackageInstallAtCaseDir,
-    mockPackageInstallStatus,
     setTty,
     setupNonInteractiveDowngrade,
     setupInstalledPackageAtNodeModules,
@@ -115,7 +114,7 @@ describe("update-cli", () => {
   });
 
   it("owes a shell completion refresh whose profile install fails", async () => {
-    cli.mockGitUpdateAfterMutation(cli.makeOkUpdateResult({ after: { version: VERSION } }), false, {
+    cli.mockGitUpdateAfterMutation(cli.makeOkUpdateResult({ after: { version: VERSION } }), {
       databaseEngines: ["sqlite", "postgres"],
     });
     setTty(true);
@@ -146,7 +145,7 @@ describe("update-cli", () => {
     { outcome: "owes a failed", code: 1 },
     { outcome: "settles an owed", code: 0 },
   ])("a core update $outcome completion cache refresh in JSON", async ({ code }) => {
-    cli.mockGitUpdateAfterMutation(cli.makeOkUpdateResult({ after: { version: VERSION } }), false, {
+    cli.mockGitUpdateAfterMutation(cli.makeOkUpdateResult({ after: { version: VERSION } }), {
       databaseEngines: ["sqlite", "postgres"],
     });
     oweEarlier("shell-completion");
@@ -181,7 +180,7 @@ describe("update-cli", () => {
   });
 
   it("prompts for optional shell completion setup without --yes", async () => {
-    cli.mockGitUpdateAfterMutation(cli.makeOkUpdateResult({ after: { version: VERSION } }), false, {
+    cli.mockGitUpdateAfterMutation(cli.makeOkUpdateResult({ after: { version: VERSION } }), {
       databaseEngines: ["sqlite", "postgres"],
     });
     setTty(true);
@@ -554,59 +553,6 @@ describe("update-cli", () => {
     },
   );
 
-  it("update wizard forwards explicit consent before the subcommand", async () => {
-    const root = await fs.realpath(tempDirs.make("openclaw-update-wizard-"));
-    const tempDir = path.join(root, "openclaw");
-    const nodeModules = path.join(root, "prefix", "lib", "node_modules");
-    const packageRoot = path.join(nodeModules, "openclaw");
-    const sha = "a".repeat(40);
-    const databaseEngines = ["sqlite", "postgres"];
-    await writeOpenClawPackageFixture(packageRoot, "2026.4.10", { inventory: true });
-    mockPackageInstallStatus(packageRoot);
-    mockFileBackedPathExists();
-    mockNpmGlobalCommands(
-      nodeModules,
-      async (argv) => {
-        if (argv[0] === "git" && argv[1] === "clone") {
-          const stagingDir = check.requireValue(argv.at(-1), "clone destination");
-          await writeOpenClawPackageFixture(stagingDir, VERSION, {
-            git: true,
-            databaseEngines,
-          });
-          return commandResult();
-        }
-        return undefined;
-      },
-      tempDir,
-    );
-    vi.spyOn(cli.updateCliShared, "tryWriteCompletionCache").mockResolvedValueOnce("completed");
-    await withEnvAsync({ OPENCLAW_GIT_DIR: tempDir }, async () => {
-      setTty(true);
-      mocks.select.mockResolvedValue("dev");
-      mocks.confirm.mockResolvedValue(true);
-      cli.mockGitUpdateAfterMutation(
-        cli.makeOkUpdateResult({
-          after: { sha, version: VERSION },
-        }),
-        false,
-        { databaseEngines },
-      );
-
-      const program = new Command();
-      program.exitOverride();
-      cli.registerUpdateCli(program);
-      await program.parseAsync(["node", "openclaw", "update", "--accept-capabilities", "wizard"]);
-
-      expect(cli.readConfigFileSnapshot).toHaveBeenCalledWith({ observe: false });
-      const call = vi.mocked(gitUpdate).mock.calls[0]?.[0];
-      expect(call?.opts.channel).toBe("dev");
-      expect(check.syncPluginCall()).toMatchObject({
-        onCapabilityConsent: expect.any(Function),
-      });
-      expect(runtime.exit).not.toHaveBeenCalledWith(1);
-    });
-  });
-
   it.each([
     {
       name: "versioned tracked target",
@@ -867,7 +813,6 @@ describe("update-cli", () => {
         root: canonicalGitRoot,
         after: { sha, version: VERSION },
       }),
-      false,
       { databaseEngines: ["sqlite", "postgres"] },
     );
     await withEnvAsync({ OPENCLAW_GIT_DIR: gitRoot }, () => runUpdate({ yes: true }));

@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { resolveConfigPath } from "../config/paths.js";
 import { sleep } from "../utils/sleep.js";
+import { syncDirectoryIfSupported } from "./directory-durability.js";
 import { ignoreMissingPath } from "./errno.js";
 import { readGatewayOwnerLease } from "./gateway-owner-lease.js";
 import { writeGitReleaseLauncher, type GitReleaseTrial } from "./git-release-launcher.js";
@@ -15,9 +16,9 @@ import {
 } from "./package-release-slot-path.js";
 import {
   capturePackageReleaseSlot,
-  createPackageReleaseLink,
   createPackageReleasePrefix,
   packageReleaseLinkTarget,
+  sweepPackageReleaseTemporaryLinks,
   switchPackageReleaseLink,
 } from "./package-release-slot.js";
 import { readBuiltGatewayBuildId } from "./update-git-runtime.js";
@@ -72,11 +73,15 @@ export async function publishGitRelease(params: {
       });
     }
   } else {
-    await createPackageReleaseLink({
-      slot,
-      target,
-      assertCurrent: () => params.assertCurrent?.(),
-    });
+    const globalRoot = path.dirname(slot);
+    await fs.mkdir(globalRoot, { recursive: true });
+    await sweepPackageReleaseTemporaryLinks(globalRoot);
+    const temporary = path.join(globalRoot, `.openclaw.release-link-${process.pid}-${Date.now()}`);
+    // POSIX ignores the type; on Windows a junction needs no administrator rights.
+    await fs.symlink(target, temporary, "junction");
+    params.assertCurrent?.();
+    await fs.rename(temporary, slot);
+    await syncDirectoryIfSupported(globalRoot);
   }
   if (params.trial && previous) {
     const buildId = await readBuiltGatewayBuildId(params.releaseRoot);

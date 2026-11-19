@@ -11,15 +11,6 @@ import type { CommandRunner } from "./update-runner-types.js";
 
 const PREFLIGHT_CLEANUP_TIMEOUT_MS = 60_000;
 
-/** Only reporting failed; no runtime or process-settlement verdict is implied. */
-export class GitCleanupReportingError extends AggregateError {
-  constructor(primary: unknown, reportingFailures: unknown[]) {
-    super([primary, ...reportingFailures], "Git update and cleanup reporting failed", {
-      cause: primary,
-    });
-  }
-}
-
 async function reportCleanupProgress(
   report: () => void | Promise<void>,
   onReportingError: (error: unknown) => void,
@@ -48,7 +39,6 @@ export async function cleanupGitPreflight(
     gitRoot: string;
     step: StepFactory;
     runCommand: CommandRunner;
-    onCleanupReportingError?: (error: unknown) => void;
   },
   worktreeDir: string,
   preflightRoot: string,
@@ -64,7 +54,6 @@ export async function cleanupGitPreflight(
   const reportingFailures: unknown[] = [];
   const onReportingError = (error: unknown) => {
     reportingFailures.push(error);
-    params.onCleanupReportingError?.(error);
   };
   // Cancellation ends candidate work, not cleanup of the worktree and its Git metadata.
   // Keep cleanup commands in the owned process tree with their existing bounded budget.

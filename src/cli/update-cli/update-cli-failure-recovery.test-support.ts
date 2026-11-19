@@ -1,14 +1,8 @@
-import { EventEmitter } from "node:events";
 import fsSync from "node:fs";
 import path from "node:path";
-import { expect, it, vi, type Mock } from "vitest";
+import { expect, it, vi } from "vitest";
 import type { readConfigFileSnapshot as ReadConfigFileSnapshot } from "../../config/config.js";
-import type { UpdateRunResult } from "../../infra/update-runner-types.js";
 import type { runUpdateFailureTriage as RunUpdateFailureTriage } from "../../infra/update-triage.js";
-import type {
-  defaultRuntime as DefaultRuntime,
-  ExitError as ExitErrorType,
-} from "../../runtime.js";
 import { withEnvAsync } from "../../test-utils/env.js";
 import type { TempHomeEnv } from "../../test-utils/temp-home.js";
 import type { updateFinalizeCommand as UpdateFinalizeCommand } from "./update-command-finalize.js";
@@ -46,90 +40,6 @@ export const recoveryCleanupStep = () => ({
     ),
   ],
 });
-
-export function registerForegroundFailureRecoveryTests(deps: {
-  setupUpdatedRootRefresh: () => Promise<{ root: string }>;
-  spawn: Mock;
-  updateCommand: typeof UpdateCommand;
-  defaultRuntime: typeof DefaultRuntime;
-  ExitError: typeof ExitErrorType;
-  spawnCall: () => [string, string[], { env?: NodeJS.ProcessEnv; stdio?: unknown }] | undefined;
-  lastWriteJsonCall: () => unknown;
-  updateNpmInstalledPlugins: Mock;
-}) {
-  it.each([
-    { exitCode: 2, handoff: undefined, expectedExit: 1 },
-    { exitCode: 2, handoff: "1", expectedExit: 79 },
-    { exitCode: 78, handoff: "1", expectedExit: 79 },
-    { exitCode: 79, handoff: "1", expectedExit: 79 },
-    { exitCode: 80, handoff: "1", expectedExit: 79 },
-  ])(
-    "preserves foreground failure $exitCode without granting handoff $handoff authority",
-    async ({ exitCode, handoff, expectedExit }) => {
-      await deps.setupUpdatedRootRefresh();
-      deps.spawn.mockImplementationOnce(() => {
-        const child = new EventEmitter();
-        queueMicrotask(() => {
-          child.emit("exit", exitCode, null);
-          child.emit("close", exitCode, null);
-        });
-        return child;
-      });
-
-      await withEnvAsync({ OPENCLAW_UPDATE_RUN_HANDOFF: handoff }, async () => {
-        await expect(deps.updateCommand({ yes: true, json: true })).rejects.toEqual(
-          new deps.ExitError(expectedExit),
-        );
-      });
-
-      expect(deps.defaultRuntime.exit).not.toHaveBeenCalled();
-      expect(deps.spawnCall()?.[2]?.env?.OPENCLAW_UPDATE_RUN_HANDOFF).toBe(handoff);
-      const result = deps.lastWriteJsonCall() as UpdateRunResult | undefined;
-      expect(result?.verification).toEqual({});
-      expect(result).toMatchObject({
-        status: "error",
-        mode: "npm",
-        reason: "post-core-update-failed",
-        recovery: { serviceRestartSafe: false },
-        steps: expect.arrayContaining([
-          expect.objectContaining({ name: "updater-runtime-retention", exitCode: 0 }),
-          expect.objectContaining({
-            name: "post-update verification",
-            exitCode,
-            failureFacts: [
-              { check: "runtime", code: "post-core-update-failed" },
-              { check: "update", code: "update-failed" },
-            ],
-          }),
-          expect.objectContaining({ name: "package-rollback", exitCode: 0 }),
-          expect.objectContaining({ name: "package-backup-retention", exitCode: 0 }),
-          expect.objectContaining({ name: "gateway recovery observation", exitCode: 0 }),
-        ]),
-      });
-      const steps = result?.steps ?? [];
-      expect(
-        steps
-          .filter((step) => step.name !== "post-update verification")
-          .every((step) => step.exitCode === 0),
-      ).toBe(true);
-      const orderedSteps = [
-        "updater-runtime-retention",
-        "post-update verification",
-        "package-rollback",
-        "package-backup-retention",
-        "gateway recovery observation",
-      ];
-      const indexes = orderedSteps.map((name) => steps.findIndex((step) => step.name === name));
-      expect(
-        indexes.every(
-          (index, position) =>
-            index >= 0 && (position === 0 || index > (indexes[position - 1] ?? -1)),
-        ),
-      ).toBe(true);
-      expect(deps.updateNpmInstalledPlugins).not.toHaveBeenCalled();
-    },
-  );
-}
 
 export function registerFailureSelectorTests(deps: {
   updateCommand: typeof UpdateCommand;

@@ -193,7 +193,6 @@ export async function executeMutableUpdate(
     return { ...context, runId, executorFence, inputHash };
   };
   const originalRecovery = () => readOriginalUpdateRecovery(params, updateStepTimeoutMs);
-  const gitMutationRoots = params.updateInstallKind === "git" ? [params.root] : null;
   const stopManagedServiceBeforeMutableUpdate = async (
     mutationRoots: readonly string[] = [params.root],
     phase: "inspect" | "prepare" = "prepare",
@@ -354,7 +353,7 @@ export async function executeMutableUpdate(
         // Explicit artifacts acquire their version before rehearsal or activation.
         await preflightPlugins(await readPackageVersion(root));
         if (deferredFamilyPreparation) {
-          await stopManagedServiceBeforeMutableUpdate(gitMutationRoots ?? undefined, "inspect");
+          await stopManagedServiceBeforeMutableUpdate(undefined, "inspect");
         }
         await prepareMutableUpdate(ownedManagedUpdateContext?.env ?? admission?.managedEnv);
         if (params.updateInstallKind === "git") {
@@ -528,7 +527,7 @@ export async function executeMutableUpdate(
   try {
     admission = await inspectUpdateDatabaseContexts({
       ...databaseContextOptions,
-      roots: gitMutationRoots ?? [params.root],
+      roots: [params.root],
       expectedForeground: opts.run?.completionOwner === "gateway-restart" || undefined,
     });
     deferredFamilyPreparation = familyAdmission.selectContexts(
@@ -587,7 +586,6 @@ export async function executeMutableUpdate(
         channel: params.channel,
         devTarget: params.devTarget,
         inspectGitTarget: async (target, installTarget) => {
-          rollbackCapture.selectTargetVersion(target.version);
           await waitForCurrent();
           await assertUpdateDatabaseEngineContexts(
             admission!.contexts,
@@ -604,13 +602,10 @@ export async function executeMutableUpdate(
           assertExecutionCurrent();
           admittedTargetSchemaVersions = target.schemaVersions;
           if (!gitContextPrepared && !deferredFamilyPreparation) {
-            await stopManagedServiceBeforeMutableUpdate(gitMutationRoots ?? undefined, "inspect");
+            await stopManagedServiceBeforeMutableUpdate(undefined, "inspect");
             await prepareMutableUpdate(admission?.managedEnv);
             // Revalidation retains activation's stop and recovery state.
             gitContextPrepared = true;
-          }
-          if (mutationStarted) {
-            await beforeActivate(gitMutationRoots ?? [params.root]);
           }
         },
         validateCandidate: async (candidateRoot) => {
@@ -627,7 +622,7 @@ export async function executeMutableUpdate(
             target.postgresFamilies,
           );
           admittedTargetSchemaVersions = target.schemaVersions;
-          await beforeActivate(gitMutationRoots ?? [params.root]);
+          await beforeActivate([params.root]);
         },
       };
       result = await withMutableUpdateForwardScope(opts, () => updateGitInstall(gitUpdate));

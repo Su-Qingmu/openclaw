@@ -177,7 +177,6 @@ export const makeOkUpdateResult = (overrides: Partial<UpdateRunResult> = {}): Up
 
 export function createGitUpdateAfterMutationFixture(
   result = makeOkUpdateResult({ mode: "git" }),
-  reinspect = false,
   targetDeclaration: { databaseEngines?: string[] } = {},
 ) {
   const mutationAdmitted = vi.fn();
@@ -198,9 +197,6 @@ export function createGitUpdateAfterMutationFixture(
     await opts.validateCandidate(releaseRoot);
     await expectDefined(opts.beforeGitMutation, "Git mutation admission")(targetDeclaration);
     mutationAdmitted();
-    if (reinspect) {
-      await opts.inspectGitTarget(target);
-    }
     const root = gitReleaseSlot(prefix);
     await fs.mkdir(path.dirname(root), { recursive: true });
     await fs.rm(root, { force: true });
@@ -212,10 +208,9 @@ export function createGitUpdateAfterMutationFixture(
 
 export const mockGitUpdateAfterMutation = (
   result = makeOkUpdateResult({ mode: "git" }),
-  reinspect = false,
   targetDeclaration: { databaseEngines?: string[] } = {},
 ) => {
-  const fixture = createGitUpdateAfterMutationFixture(result, reinspect, targetDeclaration);
+  const fixture = createGitUpdateAfterMutationFixture(result, targetDeclaration);
   vi.mocked(updateGitRelease).mockImplementationOnce(fixture.run);
   return fixture.mutationAdmitted;
 };

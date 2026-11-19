@@ -43,8 +43,6 @@ export async function updateGitRelease(params: {
   defaultCommandEnv: NodeJS.ProcessEnv | undefined;
   timeoutMs: number;
   startedAt: number;
-  /** A package-to-Git switch: no Git release serves yet, so the target is the first one. */
-  firstRelease?: boolean;
 }): Promise<UpdateRunResult> {
   const { opts, timeoutMs, startedAt, runCommand } = params;
   const defaultCommandEnv = resolveGitUpdateCommandEnv(params.defaultCommandEnv);
@@ -209,7 +207,7 @@ export async function updateGitRelease(params: {
 
   // The first release is the code that runs now. It is not a candidate: it runs already.
   let previousRelease: string | undefined;
-  if (converting && !params.firstRelease) {
+  if (converting) {
     const current = await buildRelease((release, common, retainCleanup) =>
       runGitCandidatePreflight({
         ...common,
@@ -239,9 +237,7 @@ export async function updateGitRelease(params: {
       devTarget: opts.devTarget,
       // Same source is current only when the running release's artifacts verify (#158931).
       // A conversion from a linked worktree can serve a different commit than the checkout.
-      // A package-to-Git switch always builds its first release, even from a current checkout.
-      beforeRuntimeVerified:
-        !params.firstRelease && recovery.serviceRestartSafe && beforeSha === runningSha,
+      beforeRuntimeVerified: recovery.serviceRestartSafe && beforeSha === runningSha,
       validateCandidate: opts.validateCandidate,
       needsCheckoutMain: channel === "dev" && !opts.devTarget && branch !== DEV_BRANCH,
       beforeCandidate: (revision) =>

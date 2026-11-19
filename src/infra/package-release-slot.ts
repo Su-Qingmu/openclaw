@@ -153,7 +153,7 @@ function assertSameLink(
 }
 
 /** Remove leftover temporary links; only symbolic links are removed, never recursively. */
-async function sweepPackageReleaseTemporaryLinks(globalRoot: string): Promise<string[]> {
+export async function sweepPackageReleaseTemporaryLinks(globalRoot: string): Promise<string[]> {
   const names = (await fs.readdir(globalRoot).catch(ignoreMissingPath)) ?? [];
   const removed: string[] = [];
   for (const name of names.filter((entry) => entry.startsWith(TEMPORARY_LINK_PREFIX))) {
@@ -177,38 +177,6 @@ async function createTemporaryLink(globalRoot: string, target: string) {
   const identity = statIdentity(await fs.lstat(temporary, { bigint: true }));
   await syncDirectoryIfSupported(globalRoot);
   return { temporary, identity };
-}
-
-/**
- * Rename a temporary link onto the package path. Windows cannot rename onto an existing
- * junction, so it removes the old one first; a process killed in between leaves no
- * package path, and the next update publishes the link again.
- */
-async function publishTemporaryLink(temporary: string, slot: string) {
-  if (process.platform === "win32") {
-    await fs.unlink(slot).catch(ignoreMissingPath);
-  }
-  await fs.rename(temporary, slot);
-}
-
-/** Create the package link where none exists yet, with one rename. */
-export async function createPackageReleaseLink(params: {
-  slot: string;
-  target: string;
-  assertCurrent: () => void;
-}): Promise<void> {
-  const globalRoot = path.dirname(params.slot);
-  await fs.mkdir(globalRoot, { recursive: true });
-  await sweepPackageReleaseTemporaryLinks(globalRoot);
-  const { temporary } = await createTemporaryLink(globalRoot, params.target);
-  try {
-    params.assertCurrent();
-  } catch (error) {
-    await fs.unlink(temporary).catch(ignoreMissingPath);
-    throw error;
-  }
-  await fs.rename(temporary, params.slot);
-  await syncDirectoryIfSupported(globalRoot);
 }
 
 /**
@@ -239,7 +207,12 @@ export async function switchPackageReleaseLink(params: {
     await fs.unlink(temporary).catch(ignoreMissingPath);
     throw error;
   }
-  await publishTemporaryLink(temporary, params.slot);
+  // Windows cannot rename onto an existing junction, so it removes the old one first; a
+  // process killed in between leaves no package path, and the next update publishes it again.
+  if (process.platform === "win32") {
+    await fs.unlink(params.slot).catch(ignoreMissingPath);
+  }
+  await fs.rename(temporary, params.slot);
   const published = await fs.lstat(params.slot, { bigint: true });
   if (statIdentity(published) !== identity) {
     throw new Error(`Package link ${params.slot} was replaced during the release switch.`);
@@ -429,22 +402,16 @@ export function resolvePackageReleaseTarget(
 
 /**
  * The release stage for `openclaw update`, labelled with the version it expects
- * to install. npm only: pnpm and Bun stage their own projects, and a Git source
- * exposure keeps its link to the checkout.
+ * to install. npm only: pnpm and Bun stage their own projects.
  */
 export function resolvePackageReleaseStage(params: {
   installTarget: ResolvedGlobalInstallTarget;
   packageName: string;
   installSpec: string;
   env?: NodeJS.ProcessEnv;
-  expectedGitCheckout?: unknown;
-  activateGitRoot?: string;
 }): (PackageReleaseTarget & { label: string }) | undefined {
   const target =
-    params.installTarget.manager !== "npm" ||
-    params.installTarget.directNodeModulesRoot === true ||
-    params.expectedGitCheckout ||
-    params.activateGitRoot
+    params.installTarget.manager !== "npm" || params.installTarget.directNodeModulesRoot === true
       ? null
       : resolvePackageReleaseTarget(params.installTarget.packageRoot, params.env ?? process.env);
   return target

@@ -3,12 +3,6 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { sameFileIdentity } from "@openclaw/fs-safe/advanced";
 import { readRegularFile } from "../../infra/fs-safe.js";
-import {
-  gitReleaseSlot,
-  resolveGitReleaseLauncherForEntrypoint,
-  resolveGitReleasePrefix,
-} from "../../infra/git-release-paths.js";
-import { readPackageReleaseSlotSync } from "../../infra/package-release-slot-path.js";
 import { hasNodeErrorCode } from "../../infra/path-guards.js";
 import { DEV_BRANCH, type UpdateChannel } from "../../infra/update-channels.js";
 import {
@@ -63,11 +57,7 @@ export async function retireStandaloneGitWrapper(params: {
   const wrapperName = platform === "win32" ? "openclaw.cmd" : "openclaw";
   const searchDirs = params.searchDirs ?? (process.env.PATH ?? "").split(path.delimiter);
   const pathApi = platform === "win32" ? path.win32 : path;
-  // A wrapper already pointed at a Git release starts its launcher.
-  const expectedEntries = [
-    pathApi.join(params.previousRoot, "dist", "entry.js"),
-    resolveGitReleaseLauncherForEntrypoint(pathApi.join(params.previousRoot, "dist", "index.js")),
-  ];
+  const expectedEntry = pathApi.join(params.previousRoot, "dist", "entry.js");
   const seen = new Set<string>();
 
   for (const directory of searchDirs) {
@@ -109,7 +99,7 @@ export async function retireStandaloneGitWrapper(params: {
       platform === "win32" &&
       lines.length === 2 &&
       lines[0] === "@echo off" &&
-      expectedEntries.some((entry) => lines[1] === `node "${entry}" %*`);
+      lines[1] === `node "${expectedEntry}" %*`;
     const execArgs =
       platform === "win32" || lines.length !== 3 ? null : splitShellArgs(lines[2] ?? "");
     const matchesPosix =
@@ -118,7 +108,7 @@ export async function retireStandaloneGitWrapper(params: {
       lines[1] === "set -euo pipefail" &&
       execArgs?.length === 4 &&
       execArgs[0] === "exec" &&
-      expectedEntries.includes(execArgs[2]!) &&
+      execArgs[2] === expectedEntry &&
       execArgs[3] === "$@";
     if (!matchesWindows && !matchesPosix) {
       continue;
@@ -145,14 +135,8 @@ export async function retireStandaloneGitWrapper(params: {
     params.assertCurrent?.();
     try {
       if (params.replacementRoot) {
-        // The release launcher applies a pending release and counts Gateway trial starts.
-        const entry = resolveGitReleaseLauncherForEntrypoint(
-          pathApi.join(params.replacementRoot, "dist", "index.js"),
-        );
-        if (!entry) {
-          throw new Error(`${params.replacementRoot} is not a Git release link`);
-        }
         // The installer's formats, so its own wrapper checks still recognize the result.
+        const entry = pathApi.join(params.replacementRoot, "dist", "entry.js");
         const next =
           platform === "win32"
             ? `@echo off\r\nnode "${entry}" %*\r\n`
@@ -408,19 +392,6 @@ export async function updateGitInstall(params: {
         pkgOwnership,
       })
     : null;
-  const installEnv = await createGlobalInstallEnv(undefined, installTarget ?? {});
-  const failed = async (
-    reason: string,
-    steps: UpdateRunResult["steps"],
-  ): Promise<UpdateRunResult> => ({
-    status: "error",
-    mode: "git",
-    root: params.root,
-    reason,
-    recovery: await readOriginalUpdateRecovery(params, effectiveTimeout),
-    steps,
-    durationMs: Date.now() - params.startedAt,
-  });
   const previousPackage = installTarget
     ? await readPackageUpdateIdentity(installTarget.packageRoot ?? params.root)
     : undefined;
@@ -429,65 +400,50 @@ export async function updateGitInstall(params: {
     ? await ensureGitCheckout({
         dir: updateRoot,
         assertCurrent,
-        env: installEnv,
+        env: await createGlobalInstallEnv(undefined, installTarget ?? {}),
         timeoutMs: effectiveTimeout,
         progress: params.progress,
       })
     : null;
   const cloneSteps = checkout?.step ? [checkout.step] : [];
   if (checkout?.step && checkout.step.exitCode !== 0) {
-    return await failed("git-clone-failed", cloneSteps);
+    return {
+      status: "error",
+      mode: "git",
+      root: params.root,
+      reason: "git-clone-failed",
+      recovery: await readOriginalUpdateRecovery(params, effectiveTimeout),
+      steps: cloneSteps,
+      durationMs: Date.now() - params.startedAt,
+    };
   }
   const gitRoot = checkout?.checkoutDir ?? updateRoot;
-  // A switch's checkout serves only the release built from it. Until that release is published,
-  // a refused or failed switch removes the checkout it cloned: nothing uses it. Accepted: a crash
-  // in between leaves the checkout, and the next switch reuses it.
-  const discardUnpublishedClone = async () => {
-    if (!checkout?.step || readPackageReleaseSlotSync(gitReleaseSlot(resolveGitReleasePrefix()))) {
-      return;
-    }
-    await fs.rm(gitRoot, { recursive: true, force: true }).catch((error: unknown) => {
-      defaultRuntime.error(
-        `Warning: could not remove the unused checkout ${gitRoot}: ${String(error)}`,
-      );
-    });
-  };
-  let result: UpdateRunResult;
-  try {
-    result = await updateGitRelease({
-      ...(await buildUpdateCommandRunner(undefined, assertCurrent)),
-      gitRoot,
-      timeoutMs: params.timeoutMs ?? UPDATE_RUNNER_TIMEOUT_MS,
-      startedAt: params.startedAt,
-      firstRelease: params.switchToGit,
-      opts: {
-        deferReleaseActivation: params.deferReleaseActivation,
-        releaseNode: params.nodeRunner,
-        timeoutMs: params.timeoutMs,
-        progress: params.progress,
-        channel: params.channel,
-        devTarget: params.devTarget,
-        beforeGitMutation: async (target) => {
-          await params.beforeGitMutation(target);
-          await createSystemPackageOwnershipInspection(effectiveTimeout).assertUnowned(gitRoot);
-          assertCurrent?.();
-        },
-        inspectGitTarget: (target) => params.inspectGitTarget(target, installTarget ?? undefined),
-        validateCandidate: params.validateCandidate,
+  const result = await updateGitRelease({
+    ...(await buildUpdateCommandRunner(undefined, assertCurrent)),
+    gitRoot,
+    timeoutMs: params.timeoutMs ?? UPDATE_RUNNER_TIMEOUT_MS,
+    startedAt: params.startedAt,
+    opts: {
+      deferReleaseActivation: params.deferReleaseActivation,
+      releaseNode: params.nodeRunner,
+      timeoutMs: params.timeoutMs,
+      progress: params.progress,
+      channel: params.channel,
+      devTarget: params.devTarget,
+      beforeGitMutation: async (target) => {
+        await params.beforeGitMutation(target);
+        await createSystemPackageOwnershipInspection(effectiveTimeout).assertUnowned(gitRoot);
+        assertCurrent?.();
       },
-    });
-  } catch (error) {
-    await discardUnpublishedClone();
-    throw error;
-  }
-  if (result.status !== "ok") {
-    await discardUnpublishedClone();
-  }
+      inspectGitTarget: (target) => params.inspectGitTarget(target, installTarget ?? undefined),
+      validateCandidate: params.validateCandidate,
+    },
+  });
   const steps = [...cloneSteps, ...result.steps];
   const packageRoot = installTarget?.packageRoot;
   if (packageRoot && result.status === "ok" && result.root) {
-    // `openclaw` on PATH resolves through the global package path; it now starts the launcher.
-    const warning = await exposeGlobalPackageThroughLauncher(packageRoot, result.root);
+    // `openclaw` on PATH resolves through the global package path; it now runs the release.
+    const warning = await exposeGlobalPackageThroughRelease(packageRoot, result.root);
     if (warning) {
       defaultRuntime.error(`Warning: ${warning}`);
       steps.push({
@@ -509,32 +465,28 @@ export async function updateGitInstall(params: {
 }
 
 /**
- * Point the global npm package's `openclaw.mjs`, which its bin shims run, at the release launcher,
- * so `openclaw` on PATH selects a pending release and counts Gateway trial starts. The rest of the
- * package stays: this updater and a running Gateway still load from it, and an old service
- * definition may still name its `dist/index.js`. Its disk space stays used until
- * `npm uninstall -g openclaw` (accepted).
+ * Point the global npm package's `openclaw.mjs`, which its bin shims run, at the release link's
+ * CLI, so `openclaw` on PATH runs the selected release. The rest of the package stays: this
+ * updater and a running Gateway still load from it, and an old service definition may still name
+ * its `dist/index.js`. Its disk space stays used until `npm uninstall -g openclaw` (accepted).
  */
-async function exposeGlobalPackageThroughLauncher(
+async function exposeGlobalPackageThroughRelease(
   packageRoot: string,
   slot: string,
 ): Promise<string | undefined> {
-  const launcher = resolveGitReleaseLauncherForEntrypoint(path.join(slot, "dist", "index.js"));
-  if (!launcher) {
-    return `${slot} is not a Git release link; \`openclaw\` on PATH still starts the npm package.`;
-  }
+  const release = path.join(slot, "dist", "entry.js");
   const entry = path.join(packageRoot, "openclaw.mjs");
   const stage = `${entry}.release-${process.pid}`;
   try {
     await fs.writeFile(
       stage,
-      `#!/usr/bin/env node\n// Starts the OpenClaw Git release that ${slot} selects.\nawait import(${JSON.stringify(pathToFileURL(launcher).href)});\n`,
+      `#!/usr/bin/env node\n// Starts the OpenClaw Git release that ${slot} selects.\nawait import(${JSON.stringify(pathToFileURL(release).href)});\n`,
       { mode: 0o755 },
     );
     await fs.rename(stage, entry);
     return undefined;
   } catch (error) {
     await fs.rm(stage, { force: true }).catch(() => {});
-    return `${entry} could not start ${launcher} (${String(error)}); \`openclaw\` on PATH still starts the npm package. Run \`npm uninstall -g openclaw\`, then start OpenClaw with ${launcher}.`;
+    return `${entry} could not start ${release} (${String(error)}); \`openclaw\` on PATH still starts the npm package. Run \`npm uninstall -g openclaw\`, then start OpenClaw with ${release}.`;
   }
 }

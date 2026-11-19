@@ -14,6 +14,8 @@ import {
 import { resolveGatewayService } from "../../daemon/service.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { readGatewayOwnerLease } from "../../infra/gateway-owner-lease.js";
+import { waitForGitReleaseSuccessor } from "../../infra/git-release.js";
+import { readPackageReleaseSlotSync } from "../../infra/package-release-slot-path.js";
 import { recordUpdateRunPhase } from "../../infra/update-run-ledger.js";
 import type { UpdateStepResult } from "../../infra/update-step-result.js";
 import {
@@ -48,13 +50,9 @@ import {
 } from "./update-command-service-command.js";
 import type { UpdateServiceRestartParams } from "./update-command-service-context-types.js";
 import { resolveServiceRefreshEnv } from "./update-command-service-env.js";
-import {
-  recordGitReleaseServiceOwedWithoutRestart,
-  serviceDefinitionUsesRoot,
-  waitForGitReleaseRestart,
-} from "./update-command-service-git-release.js";
 import { revalidateManagedGatewayServiceAfterUpdate } from "./update-command-service-maintenance.js";
 import {
+  gatewayServiceCommandUsesRoot,
   readGatewayServiceStateForUpdate,
   resolveGatewayServiceManagementBlockMessageForUpdate,
   resolveUpdatedGatewayRestartPort,
@@ -242,7 +240,8 @@ export async function maybeRestartService(
       (activation.refreshServiceEnv ||
         activation.serviceInstallEnv === null ||
         activation.requireRunningServiceAfterRestart));
-  const serviceUsesUpdatedRoot = () => serviceDefinitionUsesRoot(activation);
+  const serviceUsesUpdatedRoot = () =>
+    gatewayServiceCommandUsesRoot({ root: activation.result.root, env: activation.serviceEnv });
   if (preserveDefinition && !params.definitionRecovery?.backup) {
     defaultRuntime.error(
       "Gateway service definition left unchanged; ask its deployment owner to repair stale metadata if needed.",
@@ -433,7 +432,6 @@ export async function maybeRestartService(
     if (!activation.opts.json) {
       defaultRuntime.log(theme.muted("Gateway: updater restart skipped (--no-restart)."));
     }
-    await recordGitReleaseServiceOwedWithoutRestart(activation, serviceUsesUpdatedRoot);
     if (isPackageUpdate && activation.observePackageReplacement) {
       try {
         await verifyUpdatedGateway({
@@ -467,10 +465,15 @@ export async function maybeRestartService(
     defaultRuntime.log("");
     defaultRuntime.log(theme.heading("Restarting service..."));
   }
+  // A Git release's Gateway notices its link moved and restarts into the new release
+  // itself. A native restart from inside its service job (update.run) would end this updater.
   if (
     preserveDefinition &&
-    (await waitForGitReleaseRestart(activation, () => recordPhase("restarting")))
+    activation.result.mode === "git" &&
+    readPackageReleaseSlotSync(activation.result.root ?? "")
   ) {
+    recordPhase("restarting");
+    await waitForGitReleaseSuccessor(activation.serviceEnv, run?.deadline?.signal);
     assertCurrent();
     const outcome = await verifyRestartedGateway(
       normalizeOptionalString(expectedIdentity?.version),

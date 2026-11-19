@@ -23,7 +23,6 @@ import { createUpdateCliFixture } from "./update-cli-fixture.test-support.js";
 import {
   gatewayFixturePid,
   readPackageVersion,
-  restartHealthTestControl,
   resumeScheduledTaskAutoStartAfterUpdate,
   serviceLoaded,
   serviceReadCommand,
@@ -45,7 +44,6 @@ import {
   replaceConfigFile,
   resolveGatewayInstallEntrypoint,
   runCommandWithTimeout,
-  runDaemonInstall,
   runDaemonRestart,
   runUpdateFailureTriage,
   updateCommand,
@@ -367,106 +365,6 @@ describe("update-cli", () => {
       },
     });
   });
-
-  it.each(["disable-committed", "none"] as const)(
-    "settles native Windows task enabled state after update finalization (%s)",
-    async (fault) => {
-      vi.spyOn(process, "platform", "get").mockReturnValue("win32");
-      const { updatedRoot: root } = await fixture.setupNpmUpdatedRootRefresh({
-        beforeVersion: "0.9.0",
-        targetVersion: "1.0.0",
-      });
-      fixture.mockRunningManagedGateway([
-        nodeExecutable,
-        path.join(root, "dist", "index.js"),
-        "gateway",
-      ]);
-      fixture.mockGatewayHealth("1.0.0", "candidate-gateway", "candidate-build");
-      restartHealthTestControl.snapshot = {
-        runtime: { status: "running", pid: gatewayFixturePid },
-        portUsage: { port: 18789, status: "free", listeners: [], hints: [] },
-        healthy: fault === "none",
-        staleGatewayPids: [],
-        gatewayBootId: "test-gateway-boot",
-        gatewayVersion: "1.0.0",
-        gatewayBuildId: "candidate-build",
-        expectedVersion: "1.0.0",
-        probeError: fault === "none" ? undefined : "candidate readiness failed",
-      };
-      await fixture.useNativeScheduledTaskControl();
-      const configuredRunCommand = requireValue(
-        vi.mocked(runCommandWithTimeout).getMockImplementation(),
-        "native update command fixture",
-      );
-      let taskEnabled = true;
-      let disables = 0;
-      const nativeActions: string[] = [];
-      const activateTask = () => {
-        nativeActions.push("/Run");
-        if (!taskEnabled) {
-          throw new Error("Scheduled Task is disabled");
-        }
-      };
-      serviceRestart.mockImplementation(async () => {
-        activateTask();
-        return { outcome: "completed" };
-      });
-      vi.mocked(runDaemonRestart).mockImplementation(async () => {
-        activateTask();
-        return true;
-      });
-      vi.mocked(runDaemonInstall).mockImplementation(async () => {
-        activateTask();
-      });
-      vi.mocked(runCommandWithTimeout).mockImplementation(async (argv, options) => {
-        const action = scheduledTaskAction(argv);
-        if (action === undefined) {
-          if (argv[2] === "gateway" && ["install", "start", "restart"].includes(argv[3] ?? "")) {
-            activateTask();
-          }
-          return configuredRunCommand(argv, options);
-        }
-        if (action === "/XML") {
-          return commandResult({
-            stdout: `<Task><Settings><Enabled>${taskEnabled}</Enabled></Settings></Task>`,
-          });
-        }
-        nativeActions.push(action);
-        if (action === "/DISABLE") {
-          disables += 1;
-          taskEnabled = false;
-          return disables > 1 && fault === "disable-committed"
-            ? commandResult({ code: 124, stderr: "disable timed out after commit" })
-            : commandResult();
-        }
-        taskEnabled = true;
-        return commandResult();
-      });
-
-      if (fault === "none") {
-        await updateCommand({ yes: true, json: true });
-        expect(nativeActions).toEqual(["/DISABLE", "/ENABLE", "/Run"]);
-      } else {
-        await expect(updateCommand({ yes: true, json: true })).rejects.toEqual(new ExitError(1));
-        expect(disables).toBe(2);
-        expect(lastWriteJsonCall()).toMatchObject({
-          status: "error",
-          reason: "restart-unhealthy",
-        });
-        if (fault === "disable-committed") {
-          expect(lastWriteJsonCall()).toMatchObject({
-            steps: expect.arrayContaining([
-              expect.objectContaining({
-                stderrTail: expect.stringContaining("disable timed out after commit"),
-              }),
-            ]),
-          });
-        }
-      }
-      expect(taskEnabled).toBe(fault === "none");
-      expect(nativeActions.slice(0, 2)).toEqual(["/DISABLE", "/ENABLE"]);
-    },
-  );
 
   it("restores package files without re-enabling Windows autostart after interruption", async () => {
     await fixture.useFileBackedConfig();

@@ -4,7 +4,6 @@ import type { OpenClawSchemaVersions } from "../state/openclaw-schema-versions.j
 import type { UpdateChannel } from "./update-channels.js";
 import type { DevUpdateTarget } from "./update-dev-target.js";
 import type { GlobalInstallManager } from "./update-global.js";
-import type { UpdateRunResult } from "./update-run-result.js";
 import type { UpdateStepResult } from "./update-step-result.js";
 
 export type { UpdateRunResult } from "./update-run-result.js";
@@ -27,7 +26,6 @@ export type UpdateStepInfo = {
 type UpdateStepCompletion = UpdateStepInfo & Omit<UpdateStepResult, "cwd">;
 
 export type UpdateStepProgress = {
-  onRollbackOutcome?: (outcome: NonNullable<UpdateRunResult["rollbackOutcome"]>) => void;
   onHeartbeat?: () => void;
   onStepStart?: (step: UpdateStepInfo) => void | Promise<void>;
   onStepComplete?: (step: UpdateStepCompletion) => void | Promise<void>;

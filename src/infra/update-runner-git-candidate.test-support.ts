@@ -1,4 +1,3 @@
-import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { afterAll, expect, vi } from "vitest";
@@ -14,16 +13,11 @@ import type { UpdateStepResult } from "./update-step-result.js";
 const { runCommandWithTimeout } = processExec;
 
 export type GitUpdateFixture = Awaited<ReturnType<typeof createGitFixtureCheckout>> & {
-  directory: string;
-  stopped: boolean;
   events: string[];
-  inspectionRoots: string[];
-  virtualStoreLayout: string;
   runCommand: CommandRunner;
   advanceRemote: () => Promise<string>;
   writeRuntime: (root?: string, sha?: string, layout?: string) => Promise<void>;
   validateCandidate: (candidateRoot: string) => Promise<void>;
-  beforeGitMutation: () => Promise<void>;
   update: (opts?: GitUpdateOptions) => Promise<UpdateRunResult>;
 };
 type GitUpdateOptions = Partial<UpdateRunnerOptions>;
@@ -34,14 +28,8 @@ export async function createGitUpdateFixture(
 ): Promise<GitUpdateFixture> {
   const checkout = await createGitFixtureCheckout(directory, manifest);
   const events: string[] = [];
-  const inspectionRoots: string[] = [];
   const runCommand: CommandRunner = async (argv, options) => {
     if (argv[0] === "git") {
-      if (argv.includes("init") && argv.includes("--bare")) {
-        const mirror = argv.at(-1);
-        assert(mirror);
-        fixture.inspectionRoots.push(path.dirname(mirror));
-      }
       return runCommandWithTimeout(argv, options);
     }
     if (argv[0] === process.execPath && argv.at(-1) === "--version") {
@@ -52,7 +40,6 @@ export async function createGitUpdateFixture(
       throw new Error(`Unexpected command: ${argv.join(" ")}`);
     }
     if (argv[1] === "build") {
-      expect(fixture.stopped).toBe(false);
       expect(options.cwd).not.toBe(fixture.root);
       await fixture.writeRuntime(
         options.cwd!,
@@ -64,31 +51,21 @@ export async function createGitUpdateFixture(
   };
   const fixture: GitUpdateFixture = {
     ...checkout,
-    directory,
-    stopped: false,
     events,
-    inspectionRoots,
-    virtualStoreLayout: "node_modules/.pnpm",
     runCommand,
     advanceRemote: () => advanceFixtureRemote(checkout.remote),
     writeRuntime(
       root = checkout.root,
       sha: string = fixture.beforeSha,
-      layout: string = fixture.virtualStoreLayout,
+      layout = "node_modules/.pnpm",
     ): Promise<void> {
       return writeRuntime(root, sha, path.join(directory, "shared-store"), layout);
     },
     async validateCandidate(candidateRoot: string) {
-      expect(fixture.stopped).toBe(false);
       await expectHead(checkout.root, fixture.beforeSha);
       expect(candidateRoot).not.toBe(checkout.root);
       await expectRuntime(candidateRoot, await runFixtureGit(candidateRoot, "rev-parse", "HEAD"));
       fixture.events.push("validate");
-    },
-    async beforeGitMutation() {
-      expect(fixture.stopped).toBe(false);
-      fixture.stopped = true;
-      fixture.events.push("stop");
     },
     update(opts: GitUpdateOptions = {}): Promise<UpdateRunResult> {
       vi.stubEnv("OPENCLAW_STATE_DIR", path.join(directory, "state"));
@@ -102,7 +79,7 @@ export async function createGitUpdateFixture(
           channel: "dev",
           inspectGitTarget: async () => {},
           validateCandidate: fixture.validateCandidate,
-          beforeGitMutation: fixture.beforeGitMutation,
+          beforeGitMutation: async () => {},
           ...opts,
         },
       });

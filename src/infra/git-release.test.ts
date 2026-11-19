@@ -291,34 +291,6 @@ describe.skipIf(process.platform === "win32" || Boolean(process.versions.bun))(
       expect(startGateway(prefix).stdout).toContain("next");
     });
 
-    it("applies a pending release to a foreground Gateway started by the CLI wrapper", async () => {
-      const { prefix } = await setup();
-      const cli = async (version: string, label: string) => {
-        const root = await release(prefix, version, "");
-        await fs.writeFile(path.join(root, "dist", "entry.js"), `console.log("${label}");\n`);
-        return root;
-      };
-      await publishGitRelease({ prefix, releaseRoot: await cli("1.0.0", "current"), trial: false });
-      await publishGitRelease({
-        prefix,
-        releaseRoot: await cli("2.0.0", "next"),
-        trial: true,
-        pending: true,
-      });
-      const wrapper = (...args: string[]) =>
-        spawnSync(process.execPath, [path.join(prefix, "openclaw-launcher.mjs"), ...args], {
-          encoding: "utf8",
-        }).stdout;
-
-      // A status query starts no Gateway, so it neither selects nor counts the release.
-      expect(wrapper("--profile", "work", "gateway", "status")).toBe("current\n");
-      expect(wrapper("gateway", "--profile", "work", "status")).toBe("current\n");
-      expect(wrapper("gateway", "--port", "1234", "status")).toBe("current\n");
-      expect(wrapper("gateway", "run", "--help")).toBe("current\n");
-      // An implicit foreground run after root options starts the Gateway.
-      expect(wrapper("--profile", "work", "gateway")).toBe("next\n");
-    });
-
     it("keeps the applied plan and the trial when removing an addition fails", async () => {
       const { stateDir, prefix } = await setup();
       const good = await release(prefix, "1.0.0", 'console.log("old");\n');

@@ -10,13 +10,11 @@ import {
   lastWriteJsonCall,
   packageInstallCommandCall,
   requireValue,
-  spawnCall,
   getLogOutput,
 } from "./update-cli-assertions.test-support.js";
 import { createUpdateCliFixture } from "./update-cli-fixture.test-support.js";
 import * as mocks from "./update-cli-mocks.test-support.js";
 import * as update from "./update-cli-modules.test-support.js";
-import { registerForegroundFailureRecoveryTests } from "./update-cli/update-cli-failure-recovery.test-support.js";
 import { packageTargetStatus } from "./update-cli/update-cli-package.test-support.js";
 import { runtimeFixture } from "./update-cli/update-command-fixtures.test-support.js";
 import * as runtimeRecovery from "./update-cli/update-command-runtime-recovery.test-support.js";
@@ -38,34 +36,6 @@ describe("update-cli", () => {
     });
     expect(packageInstallCommandCall()?.[0]).toBeUndefined();
     expectNoSideEffects(update.updateGitRelease, update.replaceConfigFile, mocks.spawn);
-  });
-
-  it("pins the compatibility host version to the downgraded target during current-process post-core plugin convergence (#87914)", async () => {
-    const { updatedRoot } = await f.setupNpmUpdatedRootRefresh({
-      beforeVersion: "2026.4.14",
-      targetVersion: "2026.4.10",
-    });
-
-    delete process.env.OPENCLAW_COMPATIBILITY_HOST_VERSION;
-    f.mockCurrentProcessFreshDoctor({
-      packageRoot: updatedRoot,
-      postCoreResumeAttempt: false,
-    });
-    let hostVersionDuringPluginUpdate: string | undefined = "unset";
-    mocks.updateNpmInstalledPlugins.mockImplementation(async () => {
-      hostVersionDuringPluginUpdate = process.env.OPENCLAW_COMPATIBILITY_HOST_VERSION;
-      return { changed: false, config: f.baseConfig, outcomes: [] };
-    });
-
-    try {
-      await update.updateCommand({ yes: true, tag: "2026.4.10", restart: false });
-
-      expect(mocks.spawn).not.toHaveBeenCalled();
-      expect(hostVersionDuringPluginUpdate).toBe("2026.4.10");
-      expect(process.env.OPENCLAW_COMPATIBILITY_HOST_VERSION).toBeUndefined();
-    } finally {
-      delete process.env.OPENCLAW_COMPATIBILITY_HOST_VERSION;
-    }
   });
 
   it("runs updated plugin migrations for a plugin-only current-process update", async () => {
@@ -126,26 +96,6 @@ describe("update-cli", () => {
     const message = result.pluginUpdate.warnings?.at(-1)?.message;
     expect(message).toMatch(/^[^\n]*update repair`[^]*process failed[^]*diagnostic output/u);
     expect(message).not.toContain("long-argv-prefix");
-  });
-});
-
-describe("update-cli", () => {
-  const f = createUpdateCliFixture({ databaseEngines: ["sqlite", "postgres"] });
-
-  registerForegroundFailureRecoveryTests({
-    setupUpdatedRootRefresh: async () => {
-      const { updatedRoot } = await f.setupNpmUpdatedRootRefresh({ targetVersion: VERSION });
-      mocks.serviceLoaded.mockResolvedValue(false);
-      mocks.serviceReadCommand.mockResolvedValue(null);
-      return { root: updatedRoot };
-    },
-    spawn: mocks.spawn,
-    updateCommand: update.updateCommand,
-    defaultRuntime: update.defaultRuntime,
-    ExitError: update.ExitError,
-    spawnCall,
-    lastWriteJsonCall,
-    updateNpmInstalledPlugins: mocks.updateNpmInstalledPlugins,
   });
 });
 

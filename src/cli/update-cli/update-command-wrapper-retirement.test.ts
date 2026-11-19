@@ -3,13 +3,14 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
+import { createConfigIO } from "../../config/io.js";
 import { gitReleaseSlot } from "../../infra/git-release-paths.js";
 import { createGitReleaseDirs, publishGitRelease } from "../../infra/git-release.js";
 import { pkgQueryResult } from "../../infra/update-freebsd-pkg-ownership.test-support.js";
 import * as exec from "../../process/exec.js";
 import { withMockedPlatform } from "../../test-utils/vitest-spies.js";
-import type { FinishUpdateParams } from "./update-command-finish-types.js";
 import { retireStandaloneGitWrapper } from "./update-command-git.js";
+import { finishParams } from "./update-command-maintenance-fixtures.test-support.js";
 import { completePostUpdateMaintenance } from "./update-command-post-update-maintenance.js";
 
 // Shell completion belongs to the user's shell, not to this fixture.
@@ -159,12 +160,16 @@ describe("retireStandaloneGitWrapper", () => {
     vi.stubEnv("PATH", `${base}${path.delimiter}${process.env.PATH ?? ""}`);
     try {
       await completePostUpdateMaintenance(
-        {
+        finishParams({
+          result: { status: "ok", mode: "git", steps: [], durationMs: 0 },
+          configSnapshot: await createConfigIO({
+            env: { OPENCLAW_CONFIG_PATH: path.join(base, "openclaw.json") },
+          }).readConfigFileSnapshot(),
           opts: { yes: true },
           root: checkout,
           previousInstallRoot: checkout,
           installKindChanged: false,
-        } as unknown as FinishUpdateParams,
+        }),
         { status: "ok", mode: "git", root: slot, steps: [], durationMs: 0 },
         () => {},
         { root: slot },

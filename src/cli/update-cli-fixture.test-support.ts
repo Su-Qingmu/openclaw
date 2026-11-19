@@ -12,7 +12,6 @@ import { gatewayHealthResponse } from "../gateway/health-response.test-support.j
 import { createStatfsFixture } from "../infra/disk-space.test-support.js";
 import { gitReleaseSlot, resolveGitReleasePrefix } from "../infra/git-release-paths.js";
 import { isBetaTag } from "../infra/update-channels.js";
-import type { UpdateRunResult } from "../infra/update-runner-types.js";
 import { withEnvAsync } from "../test-utils/env.js";
 import { createCommandResult } from "../test-utils/npm-spec-install-test-helpers.js";
 import { VERSION } from "../version.js";
@@ -136,80 +135,6 @@ export function createUpdateCliFixture(fixtureOptions: { databaseEngines?: strin
     });
   };
 
-  const setupUpdatedRootRefresh = (params?: {
-    gatewayUpdateImpl?: (root: string) => Promise<UpdateRunResult>;
-    entrypoints?: string[];
-    admitMutation?: boolean;
-    targetVersion?: string;
-  }) => {
-    const prefix = resolveGitReleasePrefix();
-    const root = gitReleaseSlot(prefix);
-    const targetRoot = path.join(
-      prefix,
-      "releases",
-      `fixture-${fixtureCount++}`,
-      "lib",
-      "node_modules",
-      "openclaw",
-    );
-    fsSync.mkdirSync(targetRoot, { recursive: true });
-    fsSync.mkdirSync(path.dirname(root), { recursive: true });
-    fsSync.rmSync(root, { force: true });
-    fsSync.symlinkSync(targetRoot, root, "junction");
-    const targetVersion = params?.targetVersion ?? VERSION;
-    const entrypoints = params?.entrypoints ?? [path.join(root, "dist", "entry.js")];
-    const packageRoots = entrypoints.map((entrypoint) => path.dirname(path.dirname(entrypoint)));
-    const packageJsonPaths = new Set(
-      packageRoots.map((packageRoot) => path.join(packageRoot, "package.json")),
-    );
-    for (const entrypoint of entrypoints) {
-      const packageRoot = path.dirname(path.dirname(entrypoint));
-      const packageJsonPath = path.join(packageRoot, "package.json");
-      fsSync.mkdirSync(path.dirname(entrypoint), { recursive: true });
-      fsSync.writeFileSync(entrypoint, "// test entrypoint\n", "utf8");
-      writeFixtureJsonSync(packageJsonPath, {
-        name: "openclaw",
-        version: targetVersion,
-        ...(fixtureOptions.databaseEngines ? { openclaw: targetDeclaration } : {}),
-      });
-      tempDirsToCleanup.add(packageRoot);
-    }
-    mocks.pathExists.mockImplementation(
-      async (candidate: string) =>
-        packageJsonPaths.has(candidate) || entrypoints.includes(candidate),
-    );
-    const readPreviousPackageVersion = assert.requireValue(
-      mocks.readPackageVersion.getMockImplementation(),
-      "package version fixture",
-    );
-    mocks.readPackageVersion.mockImplementation(async (packageRoot: string) =>
-      packageRoots.includes(packageRoot) ? targetVersion : readPreviousPackageVersion(packageRoot),
-    );
-    vi.mocked(update.updateGitRelease).mockImplementation(async ({ opts: options }) => {
-      // Admit the original owner even without activation, as the Git runner does.
-      await options.inspectGitTarget({ version: targetVersion, ...targetDeclaration });
-      // Baseline-capture cases separately exercise the actual mutation callback.
-      if (params?.admitMutation) {
-        await assert.requireValue(
-          options.beforeGitMutation,
-          "Git mutation admission",
-        )(targetDeclaration);
-      }
-      return params?.gatewayUpdateImpl
-        ? params.gatewayUpdateImpl(root)
-        : update.makeOkUpdateResult({
-            mode: "git",
-            root,
-            after: { version: targetVersion },
-            sourceRuntimePrepared: true,
-          });
-    });
-    mockGatewayHealth(targetVersion, "updated-gateway");
-    mocks.serviceLoaded.mockResolvedValue(true);
-    primeServiceCommand(["node", entrypoints[0], "gateway", "run"]);
-    return { root, entrypoints };
-  };
-
   const FRESH_POST_UPDATE_ENTRYPOINT = "/tmp/openclaw-updated-entry.mjs";
 
   const mockCurrentProcessFreshDoctor = packages.createCurrentProcessFreshDoctorFixture(
@@ -286,13 +211,6 @@ export function createUpdateCliFixture(fixtureOptions: { databaseEngines?: strin
     ...packageFixtures,
     baseConfig,
     baseSnapshot,
-    clawHubSuspiciousPayloadWarning:
-      "╭─ ClawHub Security Audit ─────────────────────────────────╮\n" +
-      "│ Outcome: Review                                         │\n" +
-      "│ Overview: Review the requested capabilities.             │\n" +
-      "╰───────────────────────────────────────────────────────────────────────╯",
-    clawHubSyncRiskError:
-      "Failed to update demo: ClawHub blocked this release; update was not started. (ClawHub clawhub:demo@1.2.4).",
     completeChangedPostCorePluginUpdate: (
       overrides: Partial<Parameters<typeof update.completePostCorePluginUpdate>[0]> = {},
     ) => update.completePostCorePluginUpdate(configs.createChangedPostCoreUpdateOptions(overrides)),
@@ -403,7 +321,6 @@ export function createUpdateCliFixture(fixtureOptions: { databaseEngines?: strin
       const entrypoint = path.join(gitReleaseSlot(resolveGitReleasePrefix()), "dist", "index.js");
       update.mockGitUpdateAfterMutation(
         update.makeOkUpdateResult({ root: previousRoot, after: { version: VERSION } }),
-        false,
         { databaseEngines: ["sqlite", "postgres"] },
       );
       mockFileBackedPathExists();
@@ -451,50 +368,6 @@ export function createUpdateCliFixture(fixtureOptions: { databaseEngines?: strin
       ),
     setStdoutTty: (value: boolean | undefined) => setStreamTty(process.stdout, value),
     setTty,
-    setupManagedGitRootRefresh: async (reinspect = false) => {
-      const { root, entrypoints } = setupUpdatedRootRefresh();
-      const updatedEntrypoint = assert.requireValue(entrypoints[0], "updated entrypoint");
-      mockOwnedGitService();
-      update.mockGitUpdateAfterMutation(
-        await packages.writeGitUpdateResultFixture({
-          root,
-          before: { sha: "old-managed-sha", version: "2026.4.26" },
-          after: { sha: "new-managed-sha", version: VERSION },
-          ...targetDeclaration,
-        }),
-        reinspect,
-        targetDeclaration,
-      );
-      mockFileBackedPathExists();
-      mocks.serviceLoaded.mockResolvedValue(true);
-      const running = { status: "running", pid: mocks.gatewayFixturePid, state: "running" };
-      mocks.serviceReadRuntime.mockResolvedValue(running);
-      mocks.serviceStop.mockImplementationOnce(async () => {
-        mocks.serviceReadRuntime.mockResolvedValue({ status: "stopped", state: "stopped" });
-      });
-      const runFixtureCommand = assert.requireValue(
-        vi.mocked(update.runCommandWithTimeout).getMockImplementation(),
-        "default command fixture",
-      );
-      vi.mocked(update.runCommandWithTimeout).mockImplementation(async (argv, options) => {
-        const result = await runFixtureCommand(argv, options);
-        if (argv[2] === "gateway" && argv[3] === "install" && result.code === 0) {
-          expect(argv[1]).toBe(updatedEntrypoint);
-          const env = assert.requireValue(
-            typeof options === "number" ? undefined : options.env,
-            "gateway install environment",
-          );
-          primeServiceCommand([argv[0], updatedEntrypoint, "gateway", "run"], env);
-        }
-        if (argv[2] === "gateway" && argv[3] === "restart" && result.code === 0) {
-          expect(argv[1]).toBe(updatedEntrypoint);
-          mocks.serviceReadRuntime.mockResolvedValue(running);
-          mockGatewayHealth(VERSION, "updated-work");
-        }
-        return result;
-      });
-      return updatedEntrypoint;
-    },
     setupNonInteractiveDowngrade: async () => {
       const tempDir = await mockPackageInstallAtCaseDir();
       setTty(false);
@@ -505,16 +378,11 @@ export function createUpdateCliFixture(fixtureOptions: { databaseEngines?: strin
 
       return tempDir;
     },
-    setupNpmUpdatedRootRefresh: async (
-      params: {
-        beforeVersion?: string;
-        targetVersion?: string;
-      } = {},
-    ) => {
-      const targetVersion = params.targetVersion ?? "2026.4.24";
+    setupNpmUpdatedRootRefresh: async () => {
+      const targetVersion = "2026.4.24";
       const updatedRoot = await mockPackageInstallAtCaseDir(
         "openclaw-updated-package",
-        params.beforeVersion ?? "2026.4.23",
+        "2026.4.23",
       );
       const updatedEntrypoint = path.join(updatedRoot, "dist", "index.js");
       primeNpmChannelTag("latest", targetVersion);
@@ -540,7 +408,6 @@ export function createUpdateCliFixture(fixtureOptions: { databaseEngines?: strin
       primeServiceCommand(["node", updatedEntrypoint, "gateway", "run"]);
       return { updatedRoot, updatedEntrypoint };
     },
-    setupUpdatedRootRefresh,
     statfsFixture: createStatfsFixture,
     tempDirs,
     tempDirsToCleanup,

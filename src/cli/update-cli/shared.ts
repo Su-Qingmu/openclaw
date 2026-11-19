@@ -265,8 +265,7 @@ async function cloneGitCheckoutTransactionally(
     : path.join(canonicalParentDir, path.basename(params.dir));
   const targetIdentity = preserveDir ? await fs.lstat(targetDir, { bigint: true }) : undefined;
   const stagingParent = preserveDir ? targetDir : canonicalParentDir;
-  // Publication moves only the repository; candidate builds keep their paths
-  // until runtime promotion and cleanup finish on this same filesystem.
+  // Stage the clone on the destination filesystem for publication by rename.
   const storageRoot = await fs.mkdtemp(path.join(stagingParent, ".openclaw-clone-"));
   const storageIdentity = await fs.lstat(storageRoot, { bigint: true });
   const stagingDir = path.join(storageRoot, "repository");
@@ -326,74 +325,70 @@ async function cloneGitCheckoutTransactionally(
       return;
     }
 
-    const publish = async (): Promise<string> => {
-      if (
-        !(await ownsDirectory(storageRoot, storageIdentity)) ||
-        !(await ownsDirectory(stagingDir, stagingIdentity)) ||
-        (targetIdentity && !(await ownsDirectory(targetDir, targetIdentity)))
-      ) {
-        throw new Error(
-          `The clone destination or staging directory changed before publication: ${targetDir}. The replacement was left unchanged; choose an empty OPENCLAW_GIT_DIR and retry.`,
-        );
-      }
-      const destinationAppeared = () =>
-        new Error(
-          `OPENCLAW_GIT_DIR appeared while cloning: ${params.dir}. The existing path was left unchanged; move it or choose another OPENCLAW_GIT_DIR, then retry.`,
-        );
-      if (!preserveDir) {
-        try {
-          await fs.lstat(targetDir);
-        } catch (error) {
-          if (!hasErrnoCode(error, "ENOENT")) {
-            throw error;
-          }
-          await fs.rename(stagingDir, targetDir);
-          published = true;
-          return targetDir;
-        }
-        throw destinationAppeared();
-      }
-
-      const destinationEntries = await fs.readdir(targetDir);
-      if (destinationEntries.length !== 1 || destinationEntries[0] !== path.basename(storageRoot)) {
-        throw destinationAppeared();
-      }
-
-      const entries = (await fs.readdir(stagingDir)).toSorted((a, b) =>
-        a === ".git" ? 1 : b === ".git" ? -1 : 0,
+    if (
+      !(await ownsDirectory(storageRoot, storageIdentity)) ||
+      !(await ownsDirectory(stagingDir, stagingIdentity)) ||
+      (targetIdentity && !(await ownsDirectory(targetDir, targetIdentity)))
+    ) {
+      throw new Error(
+        `The clone destination or staging directory changed before publication: ${targetDir}. The replacement was left unchanged; choose an empty OPENCLAW_GIT_DIR and retry.`,
       );
-      const moved: string[] = [];
-      let publishError: { value: unknown } | undefined;
+    }
+    const destinationAppeared = () =>
+      new Error(
+        `OPENCLAW_GIT_DIR appeared while cloning: ${params.dir}. The existing path was left unchanged; move it or choose another OPENCLAW_GIT_DIR, then retry.`,
+      );
+    if (!preserveDir) {
       try {
-        for (const entry of entries) {
-          await fs.rename(path.join(stagingDir, entry), path.join(targetDir, entry));
-          moved.push(entry);
-        }
+        await fs.lstat(targetDir);
       } catch (error) {
-        publishError = { value: error };
-      }
-      if (publishError) {
-        const rollbackErrors: unknown[] = [];
-        for (const entry of moved.toReversed()) {
-          try {
-            await fs.rename(path.join(targetDir, entry), path.join(stagingDir, entry));
-          } catch (rollbackError) {
-            rollbackErrors.push(rollbackError);
-          }
+        if (!hasErrnoCode(error, "ENOENT")) {
+          throw error;
         }
-        if (rollbackErrors.length > 0) {
-          cleanupStaging = false;
-          throw new AggregateError(
-            [publishError.value, ...rollbackErrors],
-            `Could not publish or fully roll back the cloned checkout at ${targetDir}; recovery files remain at ${stagingDir}`,
-          );
-        }
-        throw publishError.value;
+        await fs.rename(stagingDir, targetDir);
+        published = true;
+        return;
       }
-      published = true;
-      return targetDir;
-    };
-    await publish();
+      throw destinationAppeared();
+    }
+
+    const destinationEntries = await fs.readdir(targetDir);
+    if (destinationEntries.length !== 1 || destinationEntries[0] !== path.basename(storageRoot)) {
+      throw destinationAppeared();
+    }
+
+    const entries = (await fs.readdir(stagingDir)).toSorted((a, b) =>
+      a === ".git" ? 1 : b === ".git" ? -1 : 0,
+    );
+    const moved: string[] = [];
+    let publishError: { value: unknown } | undefined;
+    try {
+      for (const entry of entries) {
+        await fs.rename(path.join(stagingDir, entry), path.join(targetDir, entry));
+        moved.push(entry);
+      }
+    } catch (error) {
+      publishError = { value: error };
+    }
+    if (publishError) {
+      const rollbackErrors: unknown[] = [];
+      for (const entry of moved.toReversed()) {
+        try {
+          await fs.rename(path.join(targetDir, entry), path.join(stagingDir, entry));
+        } catch (rollbackError) {
+          rollbackErrors.push(rollbackError);
+        }
+      }
+      if (rollbackErrors.length > 0) {
+        cleanupStaging = false;
+        throw new AggregateError(
+          [publishError.value, ...rollbackErrors],
+          `Could not publish or fully roll back the cloned checkout at ${targetDir}; recovery files remain at ${stagingDir}`,
+        );
+      }
+      throw publishError.value;
+    }
+    published = true;
   };
   let operationFailure: { error: unknown } | undefined;
   try {
