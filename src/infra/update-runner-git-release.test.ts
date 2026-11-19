@@ -138,6 +138,8 @@ describe.skipIf(process.platform === "win32")("Git release updates", () => {
         path.join(checkout, "package.json"),
         '{"name":"openclaw","version":"1.0.0"}',
       );
+      // A distinct tree, so b never shares a's commit when both commit in the same second.
+      await fs.writeFile(path.join(checkout, "checkout.txt"), path.basename(checkout));
       await git(checkout, "add", ".");
       await git(checkout, "-c", "user.email=t@e", "-c", "user.name=T", "commit", "-qm", "base");
     }
