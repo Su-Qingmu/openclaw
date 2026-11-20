@@ -38,7 +38,9 @@ export function InviteForm(props: {
   const [selected, setRole] = createSignal<MemberRole>();
   const roles = () => definedRoles(props.roles);
   const grantable = () => grantableRoles(props.roles);
-  const selectedRole = () => grantable().find((role) => role.name === selected()) ?? grantable()[0];
+  // An explicit choice stays selected if it becomes ungrantable, so it is never swapped silently.
+  const selectedRole = () => roles().find((role) => role.name === selected()) ?? grantable()[0];
+  const canInvite = () => selectedRole()?.sandbox?.ready !== false;
   const [confirmAdmin, setConfirmAdmin] = createSignal(false);
   const [created, setCreated] = createSignal<(CreatedInvite & { role: MemberRole }) | null>(null);
   const [copied, setCopied] = createSignal(false);
@@ -46,7 +48,7 @@ export function InviteForm(props: {
   let inviteAgain!: HTMLButtonElement;
   const submit = async (confirmedAdmin = false) => {
     const invitedRole = selectedRole()?.name;
-    if (!invitedRole || props.disabled || !EMAIL.test(email().trim())) {
+    if (!invitedRole || !canInvite() || props.disabled || !EMAIL.test(email().trim())) {
       return;
     }
     let made: CreatedInvite | undefined;
@@ -99,7 +101,12 @@ export function InviteForm(props: {
               class="ocid-access__form"
               onSubmit={(event) => {
                 event.preventDefault();
-                if (!props.disabled && selectedRole() && EMAIL.test(email().trim())) {
+                if (
+                  !props.disabled &&
+                  canInvite() &&
+                  selectedRole() &&
+                  EMAIL.test(email().trim())
+                ) {
                   if (selectedRole()?.admin) {
                     setConfirmAdmin(true);
                   } else {
@@ -160,7 +167,9 @@ export function InviteForm(props: {
               <button
                 type="submit"
                 class="btn primary"
-                disabled={props.disabled || !selectedRole() || !EMAIL.test(email().trim())}
+                disabled={
+                  props.disabled || !selectedRole() || !canInvite() || !EMAIL.test(email().trim())
+                }
                 aria-busy={props.busy ? "true" : undefined}
               >
                 <span class="btn__label">Create invite link</span>

@@ -99,6 +99,21 @@ it("blocks inviting to a role whose sandbox cannot start and names the next step
   flush();
   expect(picker.value).toBe("guest");
 
+  // A chosen role that stops being grantable stays chosen and blocks submission, never
+  // silently becoming another role.
+  const submit = () => container.querySelector<HTMLButtonElement>("button[type=submit]")!;
+  const email = container.querySelector<HTMLInputElement>('input[type="email"]')!;
+  email.value = "guest@example.test";
+  email.dispatchEvent(new Event("input", { bubbles: true }));
+  flush();
+  expect(submit().disabled).toBe(false);
+  setReadiness({ ready: false, reason: "engine_unavailable", backend: "docker" });
+  flush();
+  expect(picker.value).toBe("guest");
+  expect(submit().disabled).toBe(true);
+  setReadiness({ ready: true });
+  flush();
+
   // An unverifiable backend, or People data without readiness, does not block the role.
   setReadiness({ ready: null, backend: "ssh" });
   flush();

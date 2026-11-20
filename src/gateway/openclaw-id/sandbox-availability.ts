@@ -64,12 +64,16 @@ export function createRoleSandboxReadinessCheck(cfg: OpenClawConfig | undefined)
     const key = `${engine.id}\0${image}`;
     let state = images.get(key);
     if (!state) {
-      state = inspectContainerImage(engine, image).catch(() => "unavailable" as const);
+      state = inspectContainerImage(engine, image, AbortSignal.timeout(30_000)).catch(
+        () => "unavailable" as const,
+      );
       images.set(key, state);
     }
     return state;
   };
 
+  // Doctor repairs only the defaults' image, so it is the next step only for that image.
+  const doctorChecks = resolveSandboxConfigForAgent(cfg);
   return async (agents: RoleAgents): Promise<RoleSandboxReadiness> => {
     const agentIds = agents === "*" ? listAgentIds(cfg ?? {}) : agents;
     let unverified: string | undefined;
@@ -94,6 +98,8 @@ export function createRoleSandboxReadinessCheck(cfg: OpenClawConfig | undefined)
           image,
           doctorBuilds:
             backend === "docker" &&
+            doctorChecks.backend.toLowerCase() === "docker" &&
+            image === doctorChecks.docker.image &&
             (image === DEFAULT_SANDBOX_IMAGE || image === DEFAULT_SANDBOX_COMMON_IMAGE),
         };
       }

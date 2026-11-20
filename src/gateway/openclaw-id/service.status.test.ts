@@ -245,6 +245,47 @@ it("checks each agent's own sandbox image and leaves roles without a sandbox unp
   }
 });
 
+it("names Doctor only for the image Doctor builds", async () => {
+  spawnCommand.mockImplementation(async (argv: string[]) =>
+    argv.includes("openclaw-sandbox:trixie-slim")
+      ? engineReply(true, "Error: No such image: openclaw-sandbox:trixie-slim")
+      : engineReply(false),
+  );
+  setRuntimeConfigSnapshot({
+    ...sandboxConfig({ docker: { image: "custom/sandbox:1" } }),
+    agents: {
+      defaults: { sandbox: { docker: { image: "custom/sandbox:1" } } },
+      list: [
+        {
+          id: "main",
+          default: true,
+          sandbox: { docker: { image: "openclaw-sandbox:trixie-slim" } },
+        },
+      ],
+    },
+  });
+  const claw = await linkedClaw();
+  const { service } = serviceFor(claw.authority);
+  try {
+    // Doctor checks the defaults' custom image, so it would not build this agent's image.
+    expect(await service.linkStatus({ includeSandboxReadiness: true })).toMatchObject({
+      roles: [
+        {
+          name: "guest",
+          sandbox: {
+            reason: "image_missing",
+            image: "openclaw-sandbox:trixie-slim",
+            doctorBuilds: false,
+          },
+        },
+        { name: "operator" },
+      ],
+    });
+  } finally {
+    await service.stop();
+  }
+});
+
 it("leaves non-container backend readiness unknown without probing Docker", async () => {
   expect(await guestReadiness({ backend: "ssh" })).toMatchObject({
     sandbox: { ready: null, backend: "ssh" },

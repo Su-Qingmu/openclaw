@@ -209,7 +209,12 @@ function MemberRow(props: {
     roles()[0];
   const save = async () => {
     const role = selectedRole();
-    if (!role || role.name === props.member.role || props.disabled) {
+    if (
+      !role ||
+      role.name === props.member.role ||
+      role.sandbox?.ready === false ||
+      props.disabled
+    ) {
       return;
     }
     try {
@@ -312,7 +317,10 @@ function MemberRow(props: {
               type="button"
               class="btn primary btn--sm"
               disabled={
-                props.disabled || !selectedRole() || selectedRole()?.name === props.member.role
+                props.disabled ||
+                !selectedRole() ||
+                selectedRole()?.name === props.member.role ||
+                selectedRole()?.sandbox?.ready === false
               }
               aria-busy={props.disabled ? "true" : undefined}
               onClick={() => void save()}
