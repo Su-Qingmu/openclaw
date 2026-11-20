@@ -31,6 +31,9 @@ export type RoleSandboxReadiness =
 
 type RoleAgents = "*" | readonly string[];
 
+// Grants wait for these probes on the authority write queue, so each one is short.
+const PROBE_TIMEOUT_MS = 10_000;
+
 /**
  * Checks every agent the role can use: its sandbox backend must be reachable and its image
  * present. Probes run fresh and are shared only within one returned checker.
@@ -50,7 +53,9 @@ export function createRoleSandboxReadinessCheck(cfg: OpenClawConfig | undefined)
             selected = bindPodmanSandboxEngine((await resolvePodmanSandboxRuntimeInfo()).target);
           }
           // Probe the selected target afresh; an installed client or cached target is not liveness.
-          await execContainer(selected, ["info"], { signal: AbortSignal.timeout(30_000) });
+          await execContainer(selected, ["info"], {
+            signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+          });
           return selected;
         } catch {
           return undefined;
@@ -64,7 +69,7 @@ export function createRoleSandboxReadinessCheck(cfg: OpenClawConfig | undefined)
     const key = `${engine.id}\0${image}`;
     let state = images.get(key);
     if (!state) {
-      state = inspectContainerImage(engine, image, AbortSignal.timeout(30_000)).catch(
+      state = inspectContainerImage(engine, image, AbortSignal.timeout(PROBE_TIMEOUT_MS)).catch(
         () => "unavailable" as const,
       );
       images.set(key, state);

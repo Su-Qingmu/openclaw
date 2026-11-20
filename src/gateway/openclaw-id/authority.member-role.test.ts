@@ -64,6 +64,18 @@ it.each(["tunnel", "local_operator"] as const)(
           invite_id: null,
         }),
       );
+      // A forged grant is refused on its signature before any engine probe runs.
+      spawnCommand.mockClear();
+      expect(
+        await service.submitStatement(
+          channel,
+          await claw.sign(
+            { op: "set_role", account_id: "member", role: "guest" },
+            await generateEd25519Signer(),
+          ),
+        ),
+      ).toMatchObject({ ok: false, code: expect.not.stringMatching("sandbox_unavailable") });
+      expect(spawnCommand).not.toHaveBeenCalled();
       const moveToGuest = await claw.sign({ op: "set_role", account_id: "member", role: "guest" });
       expect(await service.submitStatement(channel, moveToGuest)).toEqual(refusal);
       expect(await claw.authority.resolvePeer(peer)).toMatchObject({ role: "viewer" });

@@ -6,15 +6,19 @@ import {
 import { getRuntimeConfigSnapshot } from "../../config/runtime-snapshot.js";
 import type { AuthorityRefusal } from "./authority-result.js";
 
-class UndefinedMemberRoleError extends Error {
-  constructor(role: string) {
-    super(`The role ${role} is not defined on this claw. Choose another role on the Access page.`);
+/** A role grant the authority refuses after the owner's statement verified. */
+class MemberRoleRefusal extends Error {
+  constructor(
+    readonly code: "role_undefined" | "sandbox_unavailable",
+    detail: string,
+  ) {
+    super(detail);
   }
 }
 
-export function refuseUndefinedMemberRole(error: unknown): AuthorityRefusal {
-  if (error instanceof UndefinedMemberRoleError) {
-    return { ok: false, code: "role_undefined", detail: error.message };
+export function refuseMemberRole(error: unknown): AuthorityRefusal {
+  if (error instanceof MemberRoleRefusal) {
+    return { ok: false, code: error.code, detail: error.message };
   }
   throw error;
 }
@@ -34,7 +38,10 @@ export function assertMemberRoleDefined(input: unknown): void {
     role !== undefined &&
     !Object.hasOwn(getRuntimeConfigSnapshot()?.gateway?.roles?.definitions ?? {}, role)
   ) {
-    throw new UndefinedMemberRoleError(role);
+    throw new MemberRoleRefusal(
+      "role_undefined",
+      `The role ${role} is not defined on this claw. Choose another role on the Access page.`,
+    );
   }
 }
 
@@ -46,36 +53,25 @@ function invitedMemberRole(cap: unknown): string | undefined {
 
 /**
  * Refuses granting a role that requires a sandbox while that sandbox cannot start, so the
- * owner sets up sandboxing before inviting or moving anyone to the role.
+ * owner sets up sandboxing before inviting or moving anyone to the role. Runs on the write
+ * queue after the statement verified, so grants keep their order and forged statements
+ * never reach the engine; the probes are time-bounded.
  */
-async function refuseUnreadySandboxGrant(grant: unknown): Promise<AuthorityRefusal | undefined> {
+export async function assertSandboxGrantReady(grant: unknown): Promise<void> {
   const role = changedMemberRole(grant) ?? invitedMemberRole(grant);
   const cfg = getRuntimeConfigSnapshot() ?? undefined;
   const definitions = cfg?.gateway?.roles?.definitions ?? {};
   const definition =
     role !== undefined && Object.hasOwn(definitions, role) ? definitions[role] : undefined;
   if (role === undefined || definition?.sandbox !== "required") {
-    return undefined;
+    return;
   }
   const { createRoleSandboxReadinessCheck, sandboxUnavailableDetail } =
     await import("./sandbox-availability.js");
   const readiness = await createRoleSandboxReadinessCheck(cfg)(definition.agents);
-  return readiness.ready === false
-    ? { ok: false, code: "sandbox_unavailable", detail: sandboxUnavailableDetail(role, readiness) }
-    : undefined;
-}
-
-/**
- * Queues an owner-signed MembershipChange or InviteCap unless it grants a role whose sandbox
- * cannot start. The engine probe runs once, before the write queue, so it never blocks other
- * writes; the statement's signature is verified on the queue as before.
- */
-export async function queueSandboxGrant<T>(
-  grant: unknown,
-  queue: (work: () => Promise<T>) => Promise<T>,
-  work: () => Promise<T>,
-): Promise<T | AuthorityRefusal> {
-  return (await refuseUnreadySandboxGrant(grant)) ?? (await queue(work));
+  if (readiness.ready === false) {
+    throw new MemberRoleRefusal("sandbox_unavailable", sandboxUnavailableDetail(role, readiness));
+  }
 }
 
 // A member whose role changed reconnects, so their Gateway connections pick up the
