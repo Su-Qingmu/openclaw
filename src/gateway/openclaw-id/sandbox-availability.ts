@@ -113,17 +113,13 @@ export function createRoleSandboxReadinessCheck(cfg: OpenClawConfig | undefined)
   };
 }
 
-/** Why a role whose sandbox cannot start is not granted, and the next step. */
+/** Why a role whose sandbox cannot start is not granted. */
 export function sandboxUnavailableDetail(
   role: string,
   readiness: Extract<RoleSandboxReadiness, { ready: false }>,
 ): string {
   const engine = readiness.backend === "podman" ? "Podman" : "Docker";
   return readiness.reason === "engine_unavailable"
-    ? `The ${role} role requires a sandbox, but ${engine} is not reachable on this claw. Start ${engine}, then try again.`
-    : `The ${role} role requires a sandbox, but the sandbox image ${readiness.image} is missing. ${
-        readiness.doctorBuilds
-          ? "Run openclaw doctor --fix on this claw to build it"
-          : "Build or pull it on this claw"
-      }, then try again.`;
+    ? `The ${role} role requires a sandbox, but ${engine} is not reachable on this claw. Set up sandboxing, then try again.`
+    : `The ${role} role requires a sandbox, but its sandbox image ${readiness.image} is missing on this claw. Set up sandboxing, then try again.`;
 }

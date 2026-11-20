@@ -46,9 +46,11 @@ const operator: Role = {
   requiresSandbox: false,
 };
 
-it("blocks inviting to a role whose sandbox cannot start and names the next step", () => {
+it("blocks inviting to a role whose sandbox cannot start and offers to ask OpenClaw", () => {
   let picker!: PickerOptions;
   const onCreate = vi.fn();
+  const [status, setStatus] = createSignal<"idle" | "asking" | "asked" | "failed">("idle");
+  const setup = { status, ask: vi.fn(), checkAgain: vi.fn() };
   let setReadiness!: (value: RoleSandboxReadiness | undefined) => void;
   const { container } = mountSolid(() => {
     const [readiness, update] = createSignal<RoleSandboxReadiness | undefined>({
@@ -67,20 +69,34 @@ it("blocks inviting to a role whose sandbox cannot start and names the next step
         disabled={false}
         locale="en-US"
         onCreate={onCreate}
+        sandboxSetup={setup}
       />
     );
   });
   flush();
   const notice = () => container.querySelector(".ocid-access__role-notice[role=status]");
   expect(notice()?.textContent).toContain(
-    "The guest role requires a sandbox, but the sandbox image openclaw-sandbox:trixie-slim is missing. Run openclaw doctor --fix on this claw",
+    "The guest role needs a sandbox. Its sandbox isn't installed on this claw yet.",
   );
-  expect(notice()?.querySelector("a")?.getAttribute("href")).toBe(
-    "https://docs.openclaw.ai/gateway/sandboxing",
+  // The page names no commands or docs detour; setup goes to the owner's agent.
+  expect(notice()?.textContent).not.toMatch(/openclaw (doctor|config)|--fix|docker build/);
+  expect(notice()?.querySelector("a")).toBeNull();
+  const button = (name: string) =>
+    [...notice()!.querySelectorAll("button")].find((candidate) => candidate.textContent === name);
+  button("Ask OpenClaw to set it up")!.click();
+  expect(setup.ask).toHaveBeenCalledWith([expect.objectContaining({ name: "guest" })]);
+  setStatus("asked");
+  flush();
+  expect(notice()?.textContent).toContain(
+    "OpenClaw is working on this in the chat beside this page",
   );
+  button("Check again")!.click();
+  expect(setup.checkAgain).toHaveBeenCalledOnce();
+  setStatus("idle");
+  flush();
   expect(picker.options.find((option) => option.value === "guest")).toMatchObject({
     disabled: true,
-    description: expect.stringContaining("not set up on this claw"),
+    description: expect.stringContaining("not set up yet"),
   });
   expect(picker.value).toBe("operator");
   picker.onSelect("guest");
@@ -89,7 +105,9 @@ it("blocks inviting to a role whose sandbox cannot start and names the next step
 
   setReadiness({ ready: false, reason: "engine_unavailable", backend: "podman" });
   flush();
-  expect(notice()?.textContent).toContain("Podman is not reachable on this claw. Start Podman");
+  expect(notice()?.textContent).toContain(
+    "Podman isn't running on the computer that hosts this claw.",
+  );
 
   setReadiness({ ready: true });
   flush();
@@ -147,7 +165,7 @@ it("disables invite creation when every member role is waiting on its sandbox", 
   flush();
   expect(picker.disabled).toBe(true);
   expect(container.querySelector<HTMLButtonElement>("button[type=submit]")?.disabled).toBe(true);
-  expect(container.textContent).toContain(
-    "registry.example.test/sandbox:1 is missing. Build or pull it on this claw",
-  );
+  expect(container.textContent).toContain("Its sandbox isn't installed on this claw yet.");
+  // Without an owner's setup handoff (read-only), the notice offers no action.
+  expect(container.querySelector(".ocid-access__sandbox-notice button")).toBeNull();
 });

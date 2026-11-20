@@ -665,9 +665,9 @@ to grant it until that sandbox can start. Creating an OpenClaw ID invite for the
 role, or changing a member to it, fails with `sandbox_unavailable` unless every
 agent the role can use has a reachable Docker or Podman backend and its sandbox
 image. The **Access** page runs the same check when it loads: unready roles are
-disabled in the role pickers, with the next step (start the engine, run
-`openclaw doctor --fix` to build the default image, or build or pull a custom
-image). Backends the Gateway cannot check, such as SSH or plugin backends, do not
+disabled in the role pickers, and **Ask OpenClaw to set it up** starts a chat
+beside the page where your default agent sets up the sandbox it reports
+missing. Choose **Check again** when it is done. Backends the Gateway cannot check, such as SSH or plugin backends, do not
 block. Existing members keep their role; `openclaw doctor` reports a missing
 engine or image for them and offers to build the default image.
 

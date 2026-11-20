@@ -21,7 +21,7 @@ import type { PeopleMotion } from "./people-motion.js";
 import { OperationError } from "./people-operation-error.js";
 import { administratorWarning, definedRoles } from "./people-roles.js";
 import { RolePicker } from "./role-picker.js";
-import { SandboxRoleNotice } from "./sandbox-role-notice.js";
+import { SandboxRoleNotice, type SandboxSetup } from "./sandbox-role-notice.js";
 import type { Invite, Member, MemberDevice, OwnerDevice, Role } from "./types.js";
 
 export type RemovedMemberNotice = { index: number; message: string };
@@ -182,6 +182,7 @@ export function PendingRequests(props: {
 
 /** One member row; Remove asks for confirmation and says what removal does. */
 function MemberRow(props: {
+  sandboxSetup?: SandboxSetup;
   motion: PeopleMotion;
   member: Member;
   ownerDevices: OwnerDevice[];
@@ -303,7 +304,7 @@ function MemberRow(props: {
           <Show when={selectedRole()?.admin}>
             <p role="note">{administratorWarning(selectedRole()?.name, props.locale)}</p>
           </Show>
-          <SandboxRoleNotice roles={props.roles} locale={props.locale} />
+          <SandboxRoleNotice roles={props.roles} locale={props.locale} setup={props.sandboxSetup} />
           <div class="ocid-access__actions">
             <button
               type="button"
@@ -384,6 +385,7 @@ function MemberRow(props: {
 
 /** Members: the owner, each member with devices and activity, and open invites. */
 export function Members(props: {
+  sandboxSetup?: SandboxSetup;
   selectedMember?: string;
   selectedDevice?: string;
   navigation: ControlUiHost["navigation"];
@@ -492,6 +494,7 @@ export function Members(props: {
                   </li>
                 </Show>
                 <MemberRow
+                  sandboxSetup={props.sandboxSetup}
                   motion={props.motion}
                   member={member()}
                   selectedDevice={props.selectedMember ? props.selectedDevice : undefined}

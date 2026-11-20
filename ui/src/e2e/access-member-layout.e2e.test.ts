@@ -209,9 +209,7 @@ suite.define(() => {
           expect.stringContaining("guest"),
           expect.stringContaining("Viewer"),
         ]);
-        expect(await options.nth(2).textContent()).toContain(
-          "Sandbox required · not set up on this claw",
-        );
+        expect(await options.nth(2).textContent()).toContain("Sandbox required · not set up yet");
         expect(await options.nth(2).getAttribute("aria-disabled")).toBe("true");
         if (process.env.OPENCLAW_CAPTURE_UI_PROOF === "1") {
           const frame = await takeControlUiScreenshotFrame(page, invite, [options.last()], {
@@ -222,7 +220,7 @@ suite.define(() => {
         await page.keyboard.press("Escape");
         await expect
           .poll(() => invite.textContent())
-          .toContain("Run openclaw doctor --fix on this claw to build it");
+          .toContain("Its sandbox isn't installed on this claw yet.");
         if (process.env.OPENCLAW_CAPTURE_UI_PROOF === "1") {
           const frame = await takeControlUiScreenshotFrame(page, invite, [invite], {
             animations: "disabled",

@@ -11,13 +11,14 @@ import type { PeopleMotion } from "./people-motion.js";
 import { OperationError } from "./people-operation-error.js";
 import { administratorWarning, definedRoles, grantableRoles } from "./people-roles.js";
 import { RolePicker } from "./role-picker.js";
-import { SandboxRoleNotice } from "./sandbox-role-notice.js";
+import { SandboxRoleNotice, type SandboxSetup } from "./sandbox-role-notice.js";
 import type { ExistingProfile, Role } from "./types.js";
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /** Invite one person with an exact role; shows the link once. */
 export function InviteForm(props: {
+  sandboxSetup?: SandboxSetup;
   motion: PeopleMotion;
   components: ControlUiHost["components"];
   disabled: boolean;
@@ -258,7 +259,7 @@ export function InviteForm(props: {
           )}
         </Show>
         <Show when={!created()}>
-          <SandboxRoleNotice roles={props.roles} locale={props.locale} />
+          <SandboxRoleNotice roles={props.roles} locale={props.locale} setup={props.sandboxSetup} />
         </Show>
         <OperationError error={props.error} />
       </div>

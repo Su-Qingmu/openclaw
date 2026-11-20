@@ -46,7 +46,7 @@ it.each(["tunnel", "local_operator"] as const)(
       ok: false,
       code: "sandbox_unavailable",
       detail:
-        "The guest role requires a sandbox, but the sandbox image openclaw-sandbox:trixie-slim is missing. Run openclaw doctor --fix on this claw to build it, then try again.",
+        "The guest role requires a sandbox, but its sandbox image openclaw-sandbox:trixie-slim is missing on this claw. Set up sandboxing, then try again.",
     };
     try {
       const invite = await ownerInvite(claw, { email: "guest@example.test", role: "guest" });
