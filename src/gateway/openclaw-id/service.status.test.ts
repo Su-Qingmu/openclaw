@@ -215,10 +215,10 @@ it("checks each agent's own sandbox image and leaves roles without a sandbox unp
   setRuntimeConfigSnapshot({
     ...config,
     agents: {
-      list: [
-        { id: "main", default: true },
-        { id: "research", sandbox: { docker: { image: "custom/sandbox:1" } } },
-      ],
+      entries: {
+        main: { default: true },
+        research: { sandbox: { docker: { image: "custom/sandbox:1" } } },
+      },
     },
   });
   const claw = await linkedClaw();
@@ -255,13 +255,9 @@ it("names Doctor only for the image Doctor builds", async () => {
     ...sandboxConfig({ docker: { image: "custom/sandbox:1" } }),
     agents: {
       defaults: { sandbox: { docker: { image: "custom/sandbox:1" } } },
-      list: [
-        {
-          id: "main",
-          default: true,
-          sandbox: { docker: { image: "openclaw-sandbox:trixie-slim" } },
-        },
-      ],
+      entries: {
+        main: { default: true, sandbox: { docker: { image: "openclaw-sandbox:trixie-slim" } } },
+      },
     },
   });
   const claw = await linkedClaw();
