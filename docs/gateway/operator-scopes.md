@@ -660,6 +660,17 @@ workspace from becoming a writable bridge between guests. Maintainer sessions
 and other sessions without a role-required sandbox keep their configured scope
 and workspace access.
 
+A role may require a sandbox before sandboxing is set up, but the Gateway refuses
+to grant it until that sandbox can start. Creating an OpenClaw ID invite for the
+role, or changing a member to it, fails with `sandbox_unavailable` unless every
+agent the role can use has a reachable Docker or Podman backend and its sandbox
+image. The **Access** page runs the same check when it loads: unready roles are
+disabled in the role pickers, with the next step (start the engine, run
+`openclaw doctor --fix` to build the default image, or build or pull a custom
+image). Backends the Gateway cannot check, such as SSH or plugin backends, do not
+block. Existing members keep their role; `openclaw doctor` reports a missing
+engine or image for them and offers to build the default image.
+
 The Gateway records the authenticated creator and their sandbox requirement
 together before a new session first runs, including chat, the OpenAI-compatible
 HTTP endpoints, Talk, recovery, forks, checkpoint branches, cron, outbound

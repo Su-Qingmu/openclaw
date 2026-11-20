@@ -21,6 +21,7 @@ import type { PeopleMotion } from "./people-motion.js";
 import { OperationError } from "./people-operation-error.js";
 import { administratorWarning, definedRoles } from "./people-roles.js";
 import { RolePicker } from "./role-picker.js";
+import { SandboxRoleNotice } from "./sandbox-role-notice.js";
 import type { Invite, Member, MemberDevice, OwnerDevice, Role } from "./types.js";
 
 export type RemovedMemberNotice = { index: number; message: string };
@@ -297,6 +298,7 @@ function MemberRow(props: {
           <Show when={selectedRole()?.admin}>
             <p role="note">{administratorWarning(selectedRole()?.name, props.locale)}</p>
           </Show>
+          <SandboxRoleNotice roles={props.roles} locale={props.locale} />
           <div class="ocid-access__actions">
             <button
               type="button"

@@ -10,6 +10,14 @@ const en = {
   },
   sandboxRequired: "Sandbox required",
   sandboxInherited: "Sandbox follows agent settings",
+  sandboxNotReady: "Sandbox required · not set up on this claw",
+  sandboxEngineUnavailable:
+    "The {role} role requires a sandbox, but {engine} is not reachable on this claw. Start {engine}, then refresh this page to invite people with this role.",
+  sandboxImageMissing:
+    "The {role} role requires a sandbox, but the sandbox image {image} is missing. Run openclaw doctor --fix on this claw to build it, then refresh this page to invite people with this role.",
+  sandboxCustomImageMissing:
+    "The {role} role requires a sandbox, but the sandbox image {image} is missing. Build or pull it on this claw, then refresh this page to invite people with this role.",
+  sandboxSetup: "Set up sandboxing",
   noRoles:
     "No roles are defined on this claw. Add a role in gateway.roles.definitions before inviting someone.",
   invalidRoleName:

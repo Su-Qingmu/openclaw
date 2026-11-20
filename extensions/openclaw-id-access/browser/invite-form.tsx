@@ -3,22 +3,21 @@ import type { MemberRole } from "@openclaw/openclaw-id-protocol";
 import type { ControlUiHost } from "openclaw/plugin-sdk/control-ui";
 import { createSignal, For, latest, onSettled, Show } from "solid-js";
 import { roleText } from "./i18n.js";
-import { InviteSandboxWarning } from "./invite-sandbox-warning.js";
 import { RoleClassificationChangedError, type CreatedInvite } from "./invites.js";
 import { Avatar } from "./people-avatar.js";
 import type { PeopleError } from "./people-error.js";
 import { formatDay, roleName } from "./people-format.js";
 import type { PeopleMotion } from "./people-motion.js";
 import { OperationError } from "./people-operation-error.js";
-import { administratorWarning, definedRoles } from "./people-roles.js";
+import { administratorWarning, definedRoles, grantableRoles } from "./people-roles.js";
 import { RolePicker } from "./role-picker.js";
-import type { ExistingProfile, Link, Role } from "./types.js";
+import { SandboxRoleNotice } from "./sandbox-role-notice.js";
+import type { ExistingProfile, Role } from "./types.js";
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /** Invite one person with an exact role; shows the link once. */
 export function InviteForm(props: {
-  link?: Link;
   motion: PeopleMotion;
   components: ControlUiHost["components"];
   disabled: boolean;
@@ -38,7 +37,8 @@ export function InviteForm(props: {
   const [existingProfileId, setExistingProfileId] = createSignal("");
   const [selected, setRole] = createSignal<MemberRole>();
   const roles = () => definedRoles(props.roles);
-  const selectedRole = () => roles().find((role) => role.name === selected()) ?? roles()[0];
+  const grantable = () => grantableRoles(props.roles);
+  const selectedRole = () => grantable().find((role) => role.name === selected()) ?? grantable()[0];
   const [confirmAdmin, setConfirmAdmin] = createSignal(false);
   const [created, setCreated] = createSignal<(CreatedInvite & { role: MemberRole }) | null>(null);
   const [copied, setCopied] = createSignal(false);
@@ -151,7 +151,7 @@ export function InviteForm(props: {
                 role={selectedRole()?.name ?? ""}
                 roles={props.roles}
                 locale={props.locale}
-                disabled={props.disabled || roles().length === 0}
+                disabled={props.disabled || grantable().length === 0}
                 onSelect={(role) => {
                   setRole(role);
                   setConfirmAdmin(false);
@@ -248,10 +248,9 @@ export function InviteForm(props: {
             </div>
           )}
         </Show>
-        <InviteSandboxWarning
-          role={created() ? undefined : selectedRole()?.name}
-          link={props.link}
-        />
+        <Show when={!created()}>
+          <SandboxRoleNotice roles={props.roles} locale={props.locale} />
+        </Show>
         <OperationError error={props.error} />
       </div>
       <p class="ocid-access__hint" id="ocid-access-role-hint">

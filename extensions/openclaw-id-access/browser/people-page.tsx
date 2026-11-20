@@ -314,7 +314,6 @@ export function PeoplePage(props: {
                   </h2>
                   <Show when={latest(ownDevicePub) && !props.params?.member}>
                     <InviteForm
-                      link={current().link}
                       motion={motion}
                       components={host.components}
                       roles={current().link.roles ?? []}

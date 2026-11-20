@@ -290,6 +290,26 @@ for (const who of ["member", "default"]) {
     expect(await detect(config)).toEqual([]);
   });
 }
+it("warns when a required-sandbox member's image is missing", async ({ state }) => {
+  state.applyEnv();
+  await writeStoredClaw(claw({ alice: "guest" }));
+  spawnCommand.mockImplementation(async (argv: string[]) => ({
+    failed: argv.includes("inspect"),
+    isCanceled: false,
+    exitCode: argv.includes("inspect") ? 1 : 0,
+    stdout: Buffer.alloc(0),
+    stderr: Buffer.from(argv.includes("inspect") ? "Error: No such image" : ""),
+  }));
+  expect(await detect(cfg())).toEqual([
+    expect.objectContaining({
+      requirement: "sandbox-image-missing",
+      message: expect.stringMatching(/alice.*openclaw-sandbox:trixie-slim is missing/),
+      fixHint: expect.stringContaining("openclaw doctor --fix"),
+      target: "guest",
+    }),
+  ]);
+});
+
 it("does not warn for unused required roles or an unprobed non-container backend", async ({
   state,
 }) => {

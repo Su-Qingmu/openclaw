@@ -24,7 +24,7 @@ export function formatDockerDaemonUnavailableError(stderr: string): string {
     .join(" ");
 }
 
-async function inspectContainerImage(
+export async function inspectContainerImage(
   engine: SandboxContainerEngine,
   image: string,
 ): Promise<"exists" | "missing"> {

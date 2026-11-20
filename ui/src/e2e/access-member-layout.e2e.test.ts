@@ -124,10 +124,16 @@ suite.define(() => {
               defined: true,
               sessions: "none",
               requiresSandbox: true,
+              sandbox: {
+                ready: false,
+                reason: "image_missing",
+                backend: "docker",
+                image: "openclaw-sandbox:trixie-slim",
+                doctorBuilds: true,
+              },
               admin: false,
             },
           ],
-          sandboxBackend: { backend: "docker", available: false },
           members: names.map((displayName, index) => ({
             accountId: "member-" + index,
             displayName,
@@ -203,17 +209,20 @@ suite.define(() => {
           expect.stringContaining("guest"),
           expect.stringContaining("Viewer"),
         ]);
-        expect(await options.nth(2).textContent()).toContain("Sandbox required");
+        expect(await options.nth(2).textContent()).toContain(
+          "Sandbox required · not set up on this claw",
+        );
+        expect(await options.nth(2).getAttribute("aria-disabled")).toBe("true");
         if (process.env.OPENCLAW_CAPTURE_UI_PROOF === "1") {
           const frame = await takeControlUiScreenshotFrame(page, invite, [options.last()], {
             animations: "disabled",
           });
           writeFileSync(path.join(suite.artifactDir, "invite-role-list.png"), frame.png);
         }
-        await page.getByRole("option", { name: /^guest/ }).click();
+        await page.keyboard.press("Escape");
         await expect
           .poll(() => invite.textContent())
-          .toContain("A sandbox backend is unavailable.");
+          .toContain("Run openclaw doctor --fix on this claw to build it");
         if (process.env.OPENCLAW_CAPTURE_UI_PROOF === "1") {
           const frame = await takeControlUiScreenshotFrame(page, invite, [invite], {
             animations: "disabled",

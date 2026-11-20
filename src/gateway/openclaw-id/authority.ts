@@ -54,8 +54,11 @@ import { canonicalMemberProfiles, type OpenClawIdMemberProfiles } from "./member
 import { retainMemberRecoveryUses } from "./member-recovery-uses.js";
 import {
   assertMemberRoleDefined,
+  assertMemberRoleSandboxReady,
+  changedMemberRole,
+  invitedMemberRole,
   roleChangeDisconnects,
-  refuseUndefinedMemberRole,
+  refuseMemberRole,
 } from "./member-role-change.js";
 import { readMemberView, readOwnerView } from "./membership-views.js";
 import { createNodeInviteOperations } from "./node-invites.js";
@@ -429,6 +432,7 @@ export function createOpenClawIdAuthority(
           return { ok: false, code: result.code, detail: result.detail };
         }
         assertMemberRoleDefined(input);
+        await assertMemberRoleSandboxReady(changedMemberRole(input));
         const resolved = resolvedInvite(input);
         await commit({
           ...current,
@@ -450,7 +454,7 @@ export function createOpenClawIdAuthority(
           status: result.status,
           events: [...expiry, ...result.events, ...reconnect],
         };
-      }).catch(refuseUndefinedMemberRole);
+      }).catch(refuseMemberRole);
     },
 
     /**
@@ -461,7 +465,7 @@ export function createOpenClawIdAuthority(
       input: { cap: unknown; proofKey: Uint8Array; existingProfileId?: string },
       channel: Channel,
     ): Promise<AuthorityAccepted | AuthorityRefusal> {
-      return serialize(async () => {
+      return serialize<AuthorityAccepted | AuthorityRefusal>(async () => {
         const stored = await load();
         if (!stored?.authority) {
           return { ok: false, code: "not_linked", detail: "this claw is not linked" };
@@ -481,6 +485,7 @@ export function createOpenClawIdAuthority(
           }
           return { ok: false, code: result.code, detail: result.detail };
         }
+        await assertMemberRoleSandboxReady(invitedMemberRole(input.cap));
         let inviteReports = current.invite_reports;
         if (input.existingProfileId !== undefined) {
           const profile = (await profiles.inviteProfiles()).find(
@@ -511,7 +516,7 @@ export function createOpenClawIdAuthority(
         Object.assign(next, inviteReports ? { invite_reports: inviteReports } : {});
         await commit(next);
         return { ok: true, status: result.status, events: [...events, ...result.events] };
-      });
+      }).catch(refuseMemberRole);
     },
 
     ...createNodeInviteOperations({ serialize, load, commit }),
@@ -523,7 +528,7 @@ export function createOpenClawIdAuthority(
       input: unknown,
       sender: RedemptionSender,
     ): Promise<AuthorityAccepted | AuthorityRefusal> {
-      return serialize(async () => {
+      return serialize<AuthorityAccepted | AuthorityRefusal>(async () => {
         const stored = await load();
         if (!stored?.authority) {
           return { ok: false, code: "not_linked", detail: "this claw is not linked" };
