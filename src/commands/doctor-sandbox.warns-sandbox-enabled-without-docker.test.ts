@@ -118,6 +118,10 @@ describe("sandbox health", () => {
     await maybeRepairSandboxImages(cfg, mockRuntime, mockPrompter);
     expectNote("A gateway role requires a sandbox but Docker is not available");
     expectNote("gateway.roles.definitions.<role>.sandbox to inherit");
+
+    // Codex's host namespace check still follows sandbox mode, not role requirements.
+    await probeOnLinux(cfg);
+    expectNoCodexProbe();
   });
 
   it("validates the explicit Podman target before checking images", async () => {

@@ -196,7 +196,8 @@ export async function noteCodexBwrapNamespaceWarnings(
   cfg: OpenClawConfig,
   options: SandboxHealthOptions = {},
 ): Promise<void> {
-  const containerEngine = resolveEnabledSandboxBackend(cfg)?.containerEngine;
+  const enabled = resolveEnabledSandboxBackend(cfg);
+  const containerEngine = enabled?.mode === "off" ? undefined : enabled?.containerEngine;
   if (process.platform !== "linux" || !containerEngine) {
     return;
   }
